@@ -6,8 +6,8 @@
   vars:
     datadog_api_key: "{{ lookup('env', 'DD_API_KEY') }}"
     datadog_site: "datadoghq.com"
-    # We use the hostname alias to label the K8s Node
-    node_name: "{{ hostname_alias | lower }}"
+    # Ensure lowercase for Kubernetes compatibility
+    cluster_name_val: "{{ hostname_alias | lower }}"
 
   tasks:
     # -------------------------------------------------------
@@ -34,11 +34,22 @@
         state: directory
         mode: '0700'
 
-    - name: Export Kubeconfig (so Helm works)
+    - name: Export Kubeconfig
       shell: microk8s config > /root/.kube/config
 
     # -------------------------------------------------------
-    # PHASE 2: DEPLOY DATADOG VIA HELM
+    # PHASE 2: CLEANUP (The "Nuclear" Fix)
+    # -------------------------------------------------------
+    # This guarantees we don't merge with old, broken config.
+    # We remove the agent entirely so the next step is a fresh install.
+    - name: Uninstall existing Datadog Agent (Clean Slate)
+      command: /snap/bin/microk8s.helm uninstall datadog-agent
+      environment:
+        KUBECONFIG: /root/.kube/config
+      ignore_errors: yes # It's okay if it's not installed yet
+
+    # -------------------------------------------------------
+    # PHASE 3: DEPLOY DATADOG VIA HELM
     # -------------------------------------------------------
     - name: Add Datadog Helm Repo
       kubernetes.core.helm_repository:
@@ -59,16 +70,20 @@
             apiKey: "{{ datadog_api_key }}"
             site: "{{ datadog_site }}"
             
-            # --- FIX: Force lowercase to satisfy K8s DNS rules ---
-            clusterName: "{{ hostname_alias | lower }}" 
-            # -----------------------------------------------------
+            # 1. Force Cluster Name (Must be lowercase)
+            clusterName: "{{ cluster_name_val }}"
+            
+            # 2. Force Hostname (The "Golden" Setting)
+            # This tells Helm explicitly to ignore AWS metadata
+            hostname: "{{ hostname_alias }}"
 
             kubelet:
               tlsVerify: false
-            
-            # This 'env' override can still be mixed-case (e.g. Datadog-Demo-Dev)
-            # This ensures the Hostname in the UI looks pretty!
+
+            # 3. Force Environment Variables (The Safety Net)
             env:
+              - name: DD_CLUSTER_NAME
+                value: "{{ cluster_name_val }}"
               - name: DD_HOSTNAME
                 value: "{{ hostname_alias }}"
 
@@ -76,15 +91,20 @@
               - "env:{{ env_tag }}"
               - "deploy_method:helm"
 
+          # Enable features to make the demo look good
           processAgent:
             enabled: true
             processCollection: true
-            
+          
+          # Ensure Orchestrator is enabled for the cluster view
+          orchestratorExplorer:
+            enabled: true
+
           agents:
             useHostNetwork: true
 
     # -------------------------------------------------------
-    # PHASE 3: DEPLOY SIMULATED APP
+    # PHASE 4: DEPLOY SIMULATED APP
     # -------------------------------------------------------
     - name: Deploy Simulated Customer App (NGINX)
       shell: |
