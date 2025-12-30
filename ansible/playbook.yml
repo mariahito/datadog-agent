@@ -1,30 +1,25 @@
-- name: Terraform Init & Apply
-        id: terraform
-        working-directory: ./terraform
-        run: |
-          terraform init
-          # Added -input=false and -no-color to prevent formatting issues
-          terraform apply -auto-approve -input=false -no-color
-          
-          # Capture IPs into variables to ensure clean strings
-          DEV_IP=$(terraform output -raw -no-color dev_ip)
-          TEST_IP=$(terraform output -raw -no-color test_ip)
-          PROD_IP=$(terraform output -raw -no-color prod_ip)
-          
-          # Debugging: Print the IPs to the GitHub Console
-          echo "Captured IPs -> Dev: $DEV_IP | Test: $TEST_IP | Prod: $PROD_IP"
-          
-          # Create the inventory file safely
-          echo "[dev]" > ../inventory.ini
-          echo "$DEV_IP env_tag=dev" >> ../inventory.ini
-          
-          echo "[test]" >> ../inventory.ini
-          echo "$TEST_IP env_tag=test" >> ../inventory.ini
-          
-          echo "[prod]" >> ../inventory.ini
-          echo "$PROD_IP env_tag=prod" >> ../inventory.ini
-          
-          # CRITICAL: Print the final file to logs for debugging
-          echo "--- INVENTORY CONTENT START ---"
-          cat ../inventory.ini
-          echo "--- INVENTORY CONTENT END ---"
+---
+- name: Deploy Datadog Agent
+  hosts: all
+  become: yes
+  remote_user: ubuntu
+  vars:
+    # Ansible gets this value from the environment variable set by the pipeline
+    datadog_api_key: "{{ lookup('env', 'DD_API_KEY') }}"
+    datadog_site: "datadoghq.com"
+
+  tasks:
+    - name: Download and Install Datadog Agent
+      shell: |
+        DD_API_KEY={{ datadog_api_key }} \
+        DD_SITE={{ datadog_site }} \
+        DD_HOST_TAGS="env:{{ env_tag }}" \
+        bash -c "$(curl -L https://s3.amazonaws.com/dd-agent/scripts/install_script_agent7.sh)"
+      args:
+        creates: /etc/datadog-agent/datadog.yaml
+
+    - name: Ensure Datadog Service is running
+      service:
+        name: datadog-agent
+        state: started
+        enabled: yes
