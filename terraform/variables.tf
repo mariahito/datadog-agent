@@ -4,22 +4,20 @@ variable "aws_region" {
   default     = "us-east-1"
 }
 
-variable "instance_type" {
-  description = "EC2 instance type"
-  type        = string
-  default     = "t2.micro"
-}
-
-# Ubuntu 22.04 LTS AMI (us-east-1)
 variable "ami_id" {
-  description = "AMI ID for Ubuntu"
+  description = "Ubuntu 24.04 LTS AMI ID for us-east-1"
   type        = string
-  default     = "ami-0c7217cdde317cfec" 
+  default     = "ami-0e2c8caa4b6378d8c"
 }
 
-# The 3 environments required by the prompt 
-variable "environment_stages" {
-  description = "List of environments to deploy"
-  type        = list(string)
-  default     = ["Dev", "Test", "Prod"]
+variable "instance_type" {
+  description = "Instance type for K8s nodes (Medium required for stability)"
+  type        = string
+  default     = "t2.medium"
+}
+
+variable "key_name" {
+  description = "Name of the SSH key pair"
+  type        = string
+  default     = "datadog-demo-key"
 }
