@@ -4,27 +4,27 @@
   become: yes
   remote_user: ubuntu
   vars:
+    # Ansible gets these values from the pipeline environment
     datadog_api_key: "{{ lookup('env', 'DD_API_KEY') }}"
     datadog_site: "datadoghq.com"
 
   tasks:
-    # 1. Debugging: Verify Ansible actually sees the name from the pipeline
-    - name: Debug Hostname Variable
-      debug:
-        msg: "Applying Hostname: {{ hostname_alias }}"
-
-    # 2. Install (Standard)
+    # 1. Install the Agent
+    # We pass DD_HOSTNAME here during install. On a fresh machine, this *should* work,
+    # but we add step #2 to guarantee it works even if the installer ignores it.
     - name: Download and Install Datadog Agent
       shell: |
         DD_API_KEY={{ datadog_api_key }} \
         DD_SITE={{ datadog_site }} \
         DD_HOST_TAGS="env:{{ env_tag }}" \
+        DD_HOSTNAME="{{ hostname_alias }}" \
         bash -c "$(curl -L https://s3.amazonaws.com/dd-agent/scripts/install_script_agent7.sh)"
       args:
+        # Prevents re-running the heavy install script if it's already there
         creates: /etc/datadog-agent/datadog.yaml
 
-    # 3. Aggressively Enforce Hostname (The Fix)
-    # The regex '^#?\s*hostname:' matches "hostname:" OR "# hostname:" OR "#hostname:"
+    # 2. Aggressively Enforce Hostname (The Safety Net)
+    # This finds "hostname:" or "# hostname:" and forces it to match our alias.
     - name: Enforce Hostname in Configuration
       lineinfile:
         path: /etc/datadog-agent/datadog.yaml
@@ -33,7 +33,8 @@
         state: present
         create: yes
 
-    # 4. Force Restart to Apply Changes
+    # 3. Force Restart
+    # Ensures the Agent loads the new config immediately.
     - name: Force Restart Datadog Agent
       service:
         name: datadog-agent
