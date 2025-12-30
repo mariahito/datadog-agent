@@ -11,6 +11,13 @@
 
   tasks:
     # -------------------------------------------------------
+    # PHASE 0: DEBUG & VERIFICATION
+    # -------------------------------------------------------
+    - name: DEBUG - Verify Hostname Variable
+      debug:
+        msg: "Deploying Agent with Hostname: {{ hostname_alias }} and Cluster: {{ cluster_name_val }}"
+
+    # -------------------------------------------------------
     # PHASE 1: BOOTSTRAP KUBERNETES (MicroK8s)
     # -------------------------------------------------------
     - name: Install MicroK8s (Lightweight Kubernetes)
@@ -38,12 +45,16 @@
       shell: microk8s config > /root/.kube/config
 
     # -------------------------------------------------------
-    # PHASE 2: CLEANUP (The "Nuclear" Fix)
+    # PHASE 2: SCORCHED EARTH (Force Delete)
     # -------------------------------------------------------
-    - name: Uninstall existing Datadog Agent (Clean Slate)
-      command: /snap/bin/microk8s.helm uninstall datadog-agent
-      environment:
-        KUBECONFIG: /root/.kube/config
+    - name: FORCE DELETE Datadog DaemonSet (Kill everything)
+      shell: |
+        /snap/bin/microk8s.kubectl delete daemonset datadog-agent --ignore-not-found=true
+        /snap/bin/microk8s.helm uninstall datadog-agent || true
+      ignore_errors: yes
+
+    - name: Wait for pods to terminate
+      shell: /snap/bin/microk8s.kubectl wait --for=delete pod -l app.kubernetes.io/name=datadog-agent --timeout=60s
       ignore_errors: yes
 
     # -------------------------------------------------------
@@ -67,24 +78,23 @@
           datadog:
             apiKey: "{{ datadog_api_key }}"
             site: "{{ datadog_site }}"
-            
-            # 1. Global Cluster Name
             clusterName: "{{ cluster_name_val }}"
             
-            # 2. Global Hostname Override
+            # --- HOSTNAME CONFIGURATION ---
             hostname: "{{ hostname_alias }}"
-
+            
+            # --- KUBELET CONFIGURATION ---
             kubelet:
               tlsVerify: false
 
-            # 3. CRITICAL: Environment Variable Overrides
+            # --- GLOBAL ENVIRONMENT VARIABLES ---
+            # These apply to ALL containers (Core, Process, Trace)
             env:
               - name: DD_CLUSTER_NAME
                 value: "{{ cluster_name_val }}"
               - name: DD_HOSTNAME
                 value: "{{ hostname_alias }}"
-              # --- THE FIX FOR HOSTNAME ID ---
-              # This forces the Agent to IGNORE AWS Instance IDs
+              # DISABLE AWS METADATA (Forces Agent to use our hostname)
               - name: DD_CLOUD_PROVIDER_METADATA
                 value: "false"
               - name: DD_EC2_METADATA_ENABLED
@@ -93,16 +103,16 @@
             tags:
               - "env:{{ env_tag }}"
               - "deploy_method:helm"
-          
-          # 4. Enable Cluster Agent explicitly (Required for Orchestrator)
+
+          # --- CLUSTER AGENT CONFIGURATION ---
           clusterAgent:
             enabled: true
             replicas: 1
+            # Pass the cluster name explicitly to the Cluster Agent too
             env:
               - name: DD_CLUSTER_NAME
                 value: "{{ cluster_name_val }}"
 
-          # Enable features to make the demo look good
           processAgent:
             enabled: true
             processCollection: true
