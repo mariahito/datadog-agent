@@ -1,42 +1,72 @@
 ---
-- name: Deploy Datadog Agent
+- name: Deploy Kubernetes (MicroK8s) & Datadog via Helm
   hosts: all
   become: yes
   remote_user: ubuntu
   vars:
-    # Ansible gets these values from the pipeline environment
     datadog_api_key: "{{ lookup('env', 'DD_API_KEY') }}"
     datadog_site: "datadoghq.com"
+    # We use the hostname alias to label the K8s Node
+    node_name: "{{ hostname_alias | lower }}"
 
   tasks:
-    # 1. Install the Agent
-    # We pass DD_HOSTNAME here during install. On a fresh machine, this *should* work,
-    # but we add step #2 to guarantee it works even if the installer ignores it.
-    - name: Download and Install Datadog Agent
-      shell: |
-        DD_API_KEY={{ datadog_api_key }} \
-        DD_SITE={{ datadog_site }} \
-        DD_HOST_TAGS="env:{{ env_tag }}" \
-        DD_HOSTNAME="{{ hostname_alias }}" \
-        bash -c "$(curl -L https://s3.amazonaws.com/dd-agent/scripts/install_script_agent7.sh)"
-      args:
-        # Prevents re-running the heavy install script if it's already there
-        creates: /etc/datadog-agent/datadog.yaml
+    # -------------------------------------------------------
+    # PHASE 1: BOOTSTRAP KUBERNETES (MicroK8s)
+    # -------------------------------------------------------
+    - name: Install MicroK8s (Lightweight Kubernetes)
+      snap:
+        name: microk8s
+        classic: yes
+        channel: 1.28/stable
 
-    # 2. Aggressively Enforce Hostname (The Safety Net)
-    # This finds "hostname:" or "# hostname:" and forces it to match our alias.
-    - name: Enforce Hostname in Configuration
-      lineinfile:
-        path: /etc/datadog-agent/datadog.yaml
-        regexp: '^#?\s*hostname:'
-        line: "hostname: {{ hostname_alias }}"
-        state: present
-        create: yes
+    - name: Wait for MicroK8s to be Ready
+      shell: microk8s status --wait-ready
+      changed_when: false
 
-    # 3. Force Restart
-    # Ensures the Agent loads the new config immediately.
-    - name: Force Restart Datadog Agent
-      service:
+    - name: Enable Helm and DNS addons
+      shell: microk8s enable helm dns
+      register: addons_result
+      changed_when: "'already enabled' not in addons_result.stdout"
+
+    - name: Create .kube directory for root
+      file:
+        path: /root/.kube
+        state: directory
+        mode: '0700'
+
+    - name: Export Kubeconfig (so Helm works)
+      shell: microk8s config > /root/.kube/config
+
+    # -------------------------------------------------------
+    # PHASE 2: DEPLOY DATADOG VIA HELM
+    # -------------------------------------------------------
+    - name: Add Datadog Helm Repo
+      kubernetes.core.helm_repository:
+        name: datadog
+        repo_url: https://helm.datadoghq.com
+        binary_path: /snap/bin/microk8s.helm
+
+    - name: Deploy Datadog Agent (Helm Chart)
+      kubernetes.core.helm:
         name: datadog-agent
-        state: restarted
-        enabled: yes
+        chart_ref: datadog/datadog
+        release_namespace: default
+        binary_path: /snap/bin/microk8s.helm
+        kubeconfig: /root/.kube/config
+        update_repo_cache: yes
+        values:
+          datadog:
+            apiKey: "{{ datadog_api_key }}"
+            site: "{{ datadog_site }}"
+            # K8s Specific Configuration
+            kubelet:
+              tlsVerify: false
+            tags:
+              - "env:{{ env_tag }}"
+              - "deploy_method:helm"
+          # This forces the Datadog Hostname to match our AWS Alias
+          # effectively naming the node inside Datadog
+          agents:
+            useHostNetwork: true
+            config:
+              hostname: "{{ hostname_alias }}"
