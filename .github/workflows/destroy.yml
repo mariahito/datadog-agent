@@ -1,7 +1,7 @@
 name: Destroy Infrastructure
 
 on:
-  workflow_dispatch:  # <--- Manual Trigger Only (Safety First!)
+  workflow_dispatch:
 
 jobs:
   destroy:
@@ -21,6 +21,7 @@ jobs:
         working-directory: ./terraform
         run: terraform init
 
+      # The "auto-approve" flag ensures it doesn't wait for "yes" input
       - name: Terraform Destroy
         working-directory: ./terraform
         run: terraform destroy -auto-approve
