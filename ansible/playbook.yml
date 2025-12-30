@@ -1,0 +1,25 @@
+---
+- name: Deploy Datadog Agent
+  hosts: all
+  become: yes
+  remote_user: ubuntu
+  vars:
+    # Pulls API key from the GitHub Secret (Env Var)
+    datadog_api_key: "{{ lookup('env', 'DD_API_KEY') }}"
+    datadog_site: "datadoghq.com"
+
+  tasks:
+    - name: Download and Install Datadog Agent
+      shell: |
+        DD_API_KEY={{ datadog_api_key }} \
+        DD_SITE={{ datadog_site }} \
+        DD_HOST_TAGS="env:{{ env_tag }}" \
+        bash -c "$(curl -L https://s3.amazonaws.com/dd-agent/scripts/install_script_agent7.sh)"
+      args:
+        creates: /etc/datadog-agent/datadog.yaml # Idempotency check
+
+    - name: Ensure Datadog Service is running
+      service:
+        name: datadog-agent
+        state: started
+        enabled: yes
