@@ -58,13 +58,16 @@
           datadog:
             apiKey: "{{ datadog_api_key }}"
             site: "{{ datadog_site }}"
-            # FIX 1: Set Cluster Name to fix "Orchestrator" errors
-            clusterName: "{{ hostname_alias }}"
+            
+            # --- FIX: Force lowercase to satisfy K8s DNS rules ---
+            clusterName: "{{ hostname_alias | lower }}" 
+            # -----------------------------------------------------
+
             kubelet:
               tlsVerify: false
             
-            # FIX 2: FORCE Hostname Override
-            # This environment variable overrides the AWS Instance ID
+            # This 'env' override can still be mixed-case (e.g. Datadog-Demo-Dev)
+            # This ensures the Hostname in the UI looks pretty!
             env:
               - name: DD_HOSTNAME
                 value: "{{ hostname_alias }}"
@@ -73,7 +76,6 @@
               - "env:{{ env_tag }}"
               - "deploy_method:helm"
 
-          # Optional: Enable Process Monitoring
           processAgent:
             enabled: true
             processCollection: true
