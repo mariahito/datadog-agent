@@ -4,7 +4,6 @@
   become: yes
   remote_user: ubuntu
   vars:
-    # Ansible gets this value from the environment variable set by the pipeline
     datadog_api_key: "{{ lookup('env', 'DD_API_KEY') }}"
     datadog_site: "datadoghq.com"
 
@@ -14,30 +13,17 @@
         DD_API_KEY={{ datadog_api_key }} \
         DD_SITE={{ datadog_site }} \
         DD_HOST_TAGS="env:{{ env_tag }}" \
-        DD_HOSTNAME="{{ hostname_alias }}" \
         bash -c "$(curl -L https://s3.amazonaws.com/dd-agent/scripts/install_script_agent7.sh)"
-      #args:
-        #creates: /etc/datadog-agent/datadog.yaml
-        
-    # --- NEW TASK: FORCE THE HOSTNAME IN CONFIG ---
+
     - name: Enforce Hostname in Configuration
       lineinfile:
         path: /etc/datadog-agent/datadog.yaml
         regexp: '^hostname:'
         line: "hostname: {{ hostname_alias }}"
         create: yes
-      notify: Restart Datadog
 
-    # --- UPDATED TASK: FORCE RESTART ---
-
-    - name: Ensure Datadog Service is running
+    - name: Force Restart Datadog Agent
       service:
         name: datadog-agent
         state: restarted
         enabled: yes
-
-handlers:
-    - name: Restart Datadog
-      service:
-        name: datadog-agent
-        state: restarted
