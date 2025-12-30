@@ -11,11 +11,16 @@
 
   tasks:
     # -------------------------------------------------------
-    # PHASE 0: DEBUG & VERIFICATION
+    # PHASE 0: PRE-FLIGHT CHECKS
     # -------------------------------------------------------
-    - name: DEBUG - Verify Hostname Variable
+    - name: DEBUG - Verify Inventory Variables
       debug:
-        msg: "Deploying Agent with Hostname: {{ hostname_alias }} and Cluster: {{ cluster_name_val }}"
+        msg: 
+          - "---------------------------------------------------"
+          - "TARGET HOST:    {{ inventory_hostname }}"
+          - "HOSTNAME ALIAS: {{ hostname_alias }}"
+          - "CLUSTER NAME:   {{ cluster_name_val }}"
+          - "---------------------------------------------------"
 
     # -------------------------------------------------------
     # PHASE 1: BOOTSTRAP KUBERNETES (MicroK8s)
@@ -45,56 +50,28 @@
       shell: microk8s config > /root/.kube/config
 
     # -------------------------------------------------------
-    # PHASE 2: SCORCHED EARTH (Force Delete)
+    # PHASE 2: GENERATE DATADOG CONFIGURATION
     # -------------------------------------------------------
-    - name: FORCE DELETE Datadog DaemonSet (Kill everything)
-      shell: |
-        /snap/bin/microk8s.kubectl delete daemonset datadog-agent --ignore-not-found=true
-        /snap/bin/microk8s.helm uninstall datadog-agent || true
-      ignore_errors: yes
-
-    - name: Wait for pods to terminate
-      shell: /snap/bin/microk8s.kubectl wait --for=delete pod -l app.kubernetes.io/name=datadog-agent --timeout=60s
-      ignore_errors: yes
-
-    # -------------------------------------------------------
-    # PHASE 3: DEPLOY DATADOG VIA HELM
-    # -------------------------------------------------------
-    - name: Add Datadog Helm Repo
-      kubernetes.core.helm_repository:
-        name: datadog
-        repo_url: https://helm.datadoghq.com
-        binary_path: /snap/bin/microk8s.helm
-
-    - name: Deploy Datadog Agent (Helm Chart)
-      kubernetes.core.helm:
-        name: datadog-agent
-        chart_ref: datadog/datadog
-        release_namespace: default
-        binary_path: /snap/bin/microk8s.helm
-        kubeconfig: /root/.kube/config
-        update_repo_cache: yes
-        values:
+    # We write to disk to ensure Helm gets the exact values we want.
+    - name: Create Datadog Values File (/tmp/datadog-values.yaml)
+      copy:
+        dest: /tmp/datadog-values.yaml
+        content: |
           datadog:
             apiKey: "{{ datadog_api_key }}"
             site: "{{ datadog_site }}"
             clusterName: "{{ cluster_name_val }}"
-            
-            # --- HOSTNAME CONFIGURATION ---
             hostname: "{{ hostname_alias }}"
-            
-            # --- KUBELET CONFIGURATION ---
             kubelet:
               tlsVerify: false
-
-            # --- GLOBAL ENVIRONMENT VARIABLES ---
-            # These apply to ALL containers (Core, Process, Trace)
+            
+            # Global Environment Variables (Apply to all containers)
             env:
               - name: DD_CLUSTER_NAME
                 value: "{{ cluster_name_val }}"
               - name: DD_HOSTNAME
                 value: "{{ hostname_alias }}"
-              # DISABLE AWS METADATA (Forces Agent to use our hostname)
+              # CRITICAL: Force Agent to ignore AWS Instance ID
               - name: DD_CLOUD_PROVIDER_METADATA
                 value: "false"
               - name: DD_EC2_METADATA_ENABLED
@@ -104,11 +81,10 @@
               - "env:{{ env_tag }}"
               - "deploy_method:helm"
 
-          # --- CLUSTER AGENT CONFIGURATION ---
+          # Required for "Orchestrator" check to work
           clusterAgent:
             enabled: true
             replicas: 1
-            # Pass the cluster name explicitly to the Cluster Agent too
             env:
               - name: DD_CLUSTER_NAME
                 value: "{{ cluster_name_val }}"
@@ -122,6 +98,23 @@
 
           agents:
             useHostNetwork: true
+
+    # -------------------------------------------------------
+    # PHASE 3: DEPLOY DATADOG
+    # -------------------------------------------------------
+    - name: Add Datadog Helm Repo
+      kubernetes.core.helm_repository:
+        name: datadog
+        repo_url: https://helm.datadoghq.com
+        binary_path: /snap/bin/microk8s.helm
+
+    - name: Deploy Datadog Agent (From Values File)
+      command: >
+        /snap/bin/microk8s.helm upgrade --install datadog-agent datadog/datadog
+        -f /tmp/datadog-values.yaml
+        --namespace default
+      environment:
+        KUBECONFIG: /root/.kube/config
 
     # -------------------------------------------------------
     # PHASE 4: DEPLOY SIMULATED APP
