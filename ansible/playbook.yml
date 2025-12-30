@@ -58,15 +58,35 @@
           datadog:
             apiKey: "{{ datadog_api_key }}"
             site: "{{ datadog_site }}"
-            # K8s Specific Configuration
+            # FIX 1: Set Cluster Name to fix "Orchestrator" errors
+            clusterName: "{{ hostname_alias }}"
             kubelet:
               tlsVerify: false
+            
+            # FIX 2: FORCE Hostname Override
+            # This environment variable overrides the AWS Instance ID
+            env:
+              - name: DD_HOSTNAME
+                value: "{{ hostname_alias }}"
+
             tags:
               - "env:{{ env_tag }}"
               - "deploy_method:helm"
-          # This forces the Datadog Hostname to match our AWS Alias
-          # effectively naming the node inside Datadog
+
+          # Optional: Enable Process Monitoring
+          processAgent:
+            enabled: true
+            processCollection: true
+            
           agents:
             useHostNetwork: true
-            config:
-              hostname: "{{ hostname_alias }}"
+
+    # -------------------------------------------------------
+    # PHASE 3: DEPLOY SIMULATED APP
+    # -------------------------------------------------------
+    - name: Deploy Simulated Customer App (NGINX)
+      shell: |
+        microk8s kubectl get deployment nginx-app || \
+        microk8s kubectl create deployment nginx-app --image=nginx --replicas=2
+      register: app_deploy
+      changed_when: "'created' in app_deploy.stdout"
