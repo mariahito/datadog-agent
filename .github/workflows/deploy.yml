@@ -36,13 +36,13 @@ jobs:
           
           # Build the inventory file in the PARENT directory
           echo "[dev]" > ../inventory.ini
-          echo "$DEV_IP env_tag=dev" >> ../inventory.ini
+          echo "$DEV_IP env_tag=dev hostname_alias=Datadog-Demo-Dev" >> ../inventory.ini
           
           echo "[test]" >> ../inventory.ini
-          echo "$TEST_IP env_tag=test" >> ../inventory.ini
+          echo "$TEST_IP env_tag=test hostname_alias=Datadog-Demo-Test" >> ../inventory.ini
           
           echo "[prod]" >> ../inventory.ini
-          echo "$PROD_IP env_tag=prod" >> ../inventory.ini
+          echo "$PROD_IP env_tag=prod hostname_alias=Datadog-Demo-Prod" >> ../inventory.ini
           
           # Debug: Print file content to logs so you can verify it
           cat ../inventory.ini
