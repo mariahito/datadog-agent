@@ -8,20 +8,32 @@
     datadog_site: "datadoghq.com"
 
   tasks:
+    # 1. Debugging: Verify Ansible actually sees the name from the pipeline
+    - name: Debug Hostname Variable
+      debug:
+        msg: "Applying Hostname: {{ hostname_alias }}"
+
+    # 2. Install (Standard)
     - name: Download and Install Datadog Agent
       shell: |
         DD_API_KEY={{ datadog_api_key }} \
         DD_SITE={{ datadog_site }} \
         DD_HOST_TAGS="env:{{ env_tag }}" \
         bash -c "$(curl -L https://s3.amazonaws.com/dd-agent/scripts/install_script_agent7.sh)"
+      args:
+        creates: /etc/datadog-agent/datadog.yaml
 
+    # 3. Aggressively Enforce Hostname (The Fix)
+    # The regex '^#?\s*hostname:' matches "hostname:" OR "# hostname:" OR "#hostname:"
     - name: Enforce Hostname in Configuration
       lineinfile:
         path: /etc/datadog-agent/datadog.yaml
-        regexp: '^hostname:'
+        regexp: '^#?\s*hostname:'
         line: "hostname: {{ hostname_alias }}"
+        state: present
         create: yes
 
+    # 4. Force Restart to Apply Changes
     - name: Force Restart Datadog Agent
       service:
         name: datadog-agent
