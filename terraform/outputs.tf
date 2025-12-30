@@ -12,3 +12,9 @@ output "prod_ip" {
   description = "Public IP of Prod Server"
   value       = aws_instance.prod_server.public_ip
 }
+
+output "private_key" {
+  description = "SSH Private Key for Ansible access"
+  value       = tls_private_key.pk.private_key_pem
+  sensitive   = true
+}
