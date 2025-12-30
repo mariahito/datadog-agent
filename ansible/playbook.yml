@@ -16,8 +16,8 @@
         DD_HOST_TAGS="env:{{ env_tag }}" \
         DD_HOSTNAME="{{ hostname_alias }}" \
         bash -c "$(curl -L https://s3.amazonaws.com/dd-agent/scripts/install_script_agent7.sh)"
-      args:
-        creates: /etc/datadog-agent/datadog.yaml
+      #args:
+        #creates: /etc/datadog-agent/datadog.yaml
 
     - name: Ensure Datadog Service is running
       service:
