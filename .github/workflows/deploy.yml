@@ -19,24 +19,33 @@ jobs:
       # STEP 1: INFRASTRUCTURE (Run inside /terraform folder)
       # ---------------------------------------------------------
       - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v1
+        uses: hashicorp/setup-terraform@v3  # Upgraded to v3
 
       - name: Terraform Init & Apply
         id: terraform
         working-directory: ./terraform
         run: |
           terraform init
-          terraform apply -auto-approve
+          # -no-color is CRITICAL here to stop inventory corruption
+          terraform apply -auto-approve -input=false -no-color
           
-          # Create inventory in the PARENT directory so Ansible can find it easily
+          # Capture IPs cleanly using -no-color again
+          DEV_IP=$(terraform output -raw -no-color dev_ip)
+          TEST_IP=$(terraform output -raw -no-color test_ip)
+          PROD_IP=$(terraform output -raw -no-color prod_ip)
+          
+          # Build the inventory file in the PARENT directory
           echo "[dev]" > ../inventory.ini
-          echo "$(terraform output -raw dev_ip) env_tag=dev" >> ../inventory.ini
+          echo "$DEV_IP env_tag=dev" >> ../inventory.ini
           
           echo "[test]" >> ../inventory.ini
-          echo "$(terraform output -raw test_ip) env_tag=test" >> ../inventory.ini
+          echo "$TEST_IP env_tag=test" >> ../inventory.ini
           
           echo "[prod]" >> ../inventory.ini
-          echo "$(terraform output -raw prod_ip) env_tag=prod" >> ../inventory.ini
+          echo "$PROD_IP env_tag=prod" >> ../inventory.ini
+          
+          # Debug: Print file content to logs so you can verify it
+          cat ../inventory.ini
 
       # ---------------------------------------------------------
       # STEP 2: CONFIGURATION (Run inside /ansible folder)
@@ -48,7 +57,7 @@ jobs:
           chmod 400 ansible_key.pem
 
       - name: Run Ansible Playbook
-        working-directory: ./ansible  # <--- CRITICAL CHANGE
+        working-directory: ./ansible
         run: |
           export ANSIBLE_HOST_KEY_CHECKING=False
           
