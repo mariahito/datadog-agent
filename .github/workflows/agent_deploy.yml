@@ -57,13 +57,13 @@ jobs:
           
           # 3. Build Inventory File (Note: Group names are lowercase)
           echo "[dev]" > ../inventory.ini
-          echo "$DEV_IP env_tag=dev" >> ../inventory.ini
+          echo "$DEV_IP env_tag=dev hostname_alias=Datadog-Demo-Dev" >> ../inventory.ini
           
           echo "[test]" >> ../inventory.ini
-          echo "$TEST_IP env_tag=test" >> ../inventory.ini
+          echo "$TEST_IP env_tag=test hostname_alias=Datadog-Demo-Test" >> ../inventory.ini
           
           echo "[prod]" >> ../inventory.ini
-          echo "$PROD_IP env_tag=prod" >> ../inventory.ini
+          echo "$PROD_IP env_tag=prod hostname_alias=Datadog-Demo-Prod" >> ../inventory.ini
           
           echo "Inventory Generated Successfully."
 
