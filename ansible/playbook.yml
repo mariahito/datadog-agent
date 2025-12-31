@@ -56,7 +56,7 @@
     # -------------------------------------------------------
     - name: Generate Datadog Values File
       template:
-        src: templates/datadog-values.j2
+        src: datadog-values.j2
         dest: /tmp/datadog-values.yaml
         mode: '0644'
 
