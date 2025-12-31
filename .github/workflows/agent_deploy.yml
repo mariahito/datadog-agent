@@ -22,7 +22,7 @@ jobs:
         uses: aws-actions/configure-aws-credentials@v4
         with:
           # Replace with your actual IAM Role ARN
-          role-to-assume: arn:aws:iam::YOUR_ACCOUNT_ID:role/GitHubActionRole
+          role-to-assume: arn:aws:iam::404612059897:role/GitHubActionRole
           aws-region: us-east-1
 
       - name: Retrieve Datadog Key from Secrets Manager
