@@ -1,0 +1,43 @@
+name: CD - Production Release
+
+on:
+  workflow_dispatch: # Manual Trigger
+  release:           # Automated Trigger
+    types: [published]
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  deploy-prod:
+    name: "Deploy Production"
+    runs-on: ubuntu-latest
+    environment: prod
+    steps:
+      - uses: actions/checkout@v4
+      
+      # [Setup Steps Omitted for Brevity - Terraform, AWS Auth, etc...]
+      # ... (Assume Terraform, Keys, and AWS Auth are here) ...
+
+      - name: Fetch Secrets
+        run: |
+          SECRET_JSON=$(aws secretsmanager get-secret-value --secret-id prod/datadog/keys --query SecretString --output text)
+          echo "DD_API_KEY=$(echo $SECRET_JSON | jq -r .DD_API_KEY)" >> $GITHUB_ENV
+
+      # ---------------------------------------------------------
+      # CLEANER LOGIC: Using Repository Variables (vars.X)
+      # These values are managed in GitHub Settings -> Variables
+      # They work for BOTH Manual and Release triggers automatically.
+      # ---------------------------------------------------------
+      - name: Run Playbook (PROD)
+        run: |
+          export ANSIBLE_HOST_KEY_CHECKING=False
+          ansible-playbook -i inventory.ini ansible/playbook.yml \
+            --private-key ansible_key.pem \
+            --limit prod \
+            --extra-vars "datadog_api_key=${{ env.DD_API_KEY }} \
+            process_agent_enabled=true \
+            logs_enabled=${{ vars.LOGS_ENABLED }} \
+            agent_limit_memory=${{ vars.AGENT_MEM_LIMIT }} \
+            agent_limit_cpu=${{ vars.AGENT_CPU_LIMIT }}"
