@@ -10,28 +10,86 @@ permissions:
   contents: read
 
 jobs:
+  # ---------------------------------------------------------
+  # JOB 1: PREPARE (Fetch Infrastructure Data)
+  # ---------------------------------------------------------
+  prepare-inventory:
+    name: "Gen Inventory"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # 1. Login to AWS (Required to read Terraform State)
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::404612059897:role/GitHubActionRole
+          aws-region: us-east-1
+
+      - uses: hashicorp/setup-terraform@v3
+
+      - name: Generate Inventory & Key
+        working-directory: ./terraform
+        run: |
+          terraform init
+          
+          # Retrieve SSH Key
+          terraform output -raw private_key > ../ansible_key.pem
+          chmod 600 ../ansible_key.pem
+          
+          # Retrieve PROD IP Only
+          PROD_IP=$(terraform output -raw prod_ip)
+
+          # Build Inventory File
+          echo "[prod]" > ../inventory.ini
+          echo "$PROD_IP env_tag=prod hostname_alias=Datadog-Demo-Prod" >> ../inventory.ini
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: deployment-artifacts
+          path: |
+            inventory.ini
+            ansible_key.pem
+          retention-days: 1
+          overwrite: true
+
+  # ---------------------------------------------------------
+  # JOB 2: DEPLOY TO PROD
+  # ---------------------------------------------------------
   deploy-prod:
     name: "Deploy Production"
+    needs: prepare-inventory
     runs-on: ubuntu-latest
     environment: prod
     steps:
       - uses: actions/checkout@v4
       
-      # [Setup Steps Omitted for Brevity - Terraform, AWS Auth, etc...]
-      # ... (Assume Terraform, Keys, and AWS Auth are here) ...
+      # 1. Retrieve the Inventory & Key from Job 1
+      - uses: actions/download-artifact@v4
+        with: { name: deployment-artifacts }
+      - run: chmod 600 ansible_key.pem
 
+      # 2. Install Tools (Ansible & Kubectl)
+      - name: Install Dependencies
+        run: |
+          pip install kubernetes ansible
+          ansible-galaxy collection install kubernetes.core
+          curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl" && chmod +x kubectl && sudo mv kubectl /usr/local/bin/
+
+      # 3. LOGIN TO AWS (CRITICAL FIX: Must happen BEFORE fetching secrets)
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::404612059897:role/GitHubActionRole
+          aws-region: us-east-1
+
+      # 4. Fetch Secrets (Now safe to run)
       - name: Fetch Secrets
         run: |
-          # Added --region us-east-1 explicitly to fix the error
+          # The --region flag is explicitly added here
           SECRET_JSON=$(aws secretsmanager get-secret-value --secret-id prod/datadog/keys --region us-east-1 --query SecretString --output text)
-          
           echo "DD_API_KEY=$(echo $SECRET_JSON | jq -r .DD_API_KEY)" >> $GITHUB_ENV
 
-      # ---------------------------------------------------------
-      # CLEANER LOGIC: Using Repository Variables (vars.X)
-      # These values are managed in GitHub Settings -> Variables
-      # They work for BOTH Manual and Release triggers automatically.
-      # ---------------------------------------------------------
+      # 5. Run Playbook using Repository Variables
       - name: Run Playbook (PROD)
         run: |
           export ANSIBLE_HOST_KEY_CHECKING=False
@@ -43,3 +101,12 @@ jobs:
             logs_enabled=${{ vars.LOGS_ENABLED }} \
             agent_limit_memory=${{ vars.AGENT_MEM_LIMIT }} \
             agent_limit_cpu=${{ vars.AGENT_CPU_LIMIT }}"
+
+      # 6. Verify Health
+      - name: "Health Check (PROD)"
+        run: |
+          echo "--- VERIFYING PROD ROLLOUT ---"
+          export ANSIBLE_HOST_KEY_CHECKING=False
+          ansible prod -i inventory.ini --private-key ansible_key.pem \
+            -u ubuntu --become \
+            -m shell -a "export PATH=\$PATH:/snap/bin; microk8s kubectl rollout status daemonset/datadog-agent -n datadog-agent --timeout=60s"
