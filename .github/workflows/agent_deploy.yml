@@ -1,61 +1,71 @@
 name: Secure Sequential Deployment
 on:
   workflow_dispatch: 
+    inputs:
+      # --- Feature Flags ---
+      process_agent_enabled:
+        description: 'Enable Process Agent?'
+        type: boolean
+        required: true
+        default: true
+      logs_enabled:
+        description: 'Enable Log Collection?'
+        type: boolean
+        required: true
+        default: true
+
+      # --- Resource Sizing (The "Profiling" Inputs) ---
+      agent_req_mem:
+        description: 'Memory Request'
+        default: '256Mi'
+      agent_lim_mem:
+        description: 'Memory Limit'
+        default: '512Mi'
+      agent_req_cpu:
+        description: 'CPU Request'
+        default: '200m'
+      agent_lim_cpu:
+        description: 'CPU Limit'
+        default: '500m'
 
 permissions:
-  id-token: write   # Allows GitHub to request a token from AWS
-  contents: read    # Allows GitHub to check out the code
+  id-token: write
+  contents: read
 
 jobs:
-  deploy-sequence:
-    name: "Secure Rollout (Dev -> Test -> Prod)"
+  # ---------------------------------------------------------
+  # JOB 1: PREPARE (Build Inventory & State)
+  # ---------------------------------------------------------
+  prepare-inventory:
+    name: "Gen Inventory"
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Code
         uses: actions/checkout@v3
 
-      # ---------------------------------------------------------
-      # STEP 1: AUTHENTICATION (OIDC) & SECRETS
-      # Replaces static secrets with temporary credentials
-      # ---------------------------------------------------------
       - name: Configure AWS Credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          # Replace with your actual IAM Role ARN
           role-to-assume: arn:aws:iam::404612059897:role/GitHubActionRole
           aws-region: us-east-1
 
-      - name: Retrieve Datadog Key from Secrets Manager
-        id: secrets
-        run: |
-          SECRET_JSON=$(aws secretsmanager get-secret-value --secret-id prod/datadog/keys --query SecretString --output text)
-          DD_API_KEY=$(echo $SECRET_JSON | jq -r .DD_API_KEY)
-          echo "::add-mask::$DD_API_KEY"
-          echo "DD_API_KEY=$DD_API_KEY" >> $GITHUB_ENV
-
-      # ---------------------------------------------------------
-      # STEP 2: SETUP INFRASTRUCTURE STATE (Your Original Logic)
-      # We need IPs and Keys before we can deploy
-      # ---------------------------------------------------------
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
 
-      - name: Fetch Infrastructure State & Build Inventory
-        id: tf-state
+      - name: Generate Inventory & Key
         working-directory: ./terraform
         run: |
           terraform init
           
-          # 1. Retrieve IPs
-          DEV_IP=$(terraform output -raw dev_ip)
-          TEST_IP=$(terraform output -raw test_ip)
-          PROD_IP=$(terraform output -raw prod_ip)
-          
-          # 2. Retrieve SSH Key
+          # Retrieve SSH Key
           terraform output -raw private_key > ../ansible_key.pem
           chmod 600 ../ansible_key.pem
           
-          # 3. Build Inventory File (Note: Group names are lowercase)
+          # Build Inventory File
+          DEV_IP=$(terraform output -raw dev_ip)
+          TEST_IP=$(terraform output -raw test_ip)
+          PROD_IP=$(terraform output -raw prod_ip)
+
           echo "[dev]" > ../inventory.ini
           echo "$DEV_IP env_tag=dev hostname_alias=Datadog-Demo-Dev" >> ../inventory.ini
           
@@ -64,97 +74,120 @@ jobs:
           
           echo "[prod]" >> ../inventory.ini
           echo "$PROD_IP env_tag=prod hostname_alias=Datadog-Demo-Prod" >> ../inventory.ini
-          
-          echo "Inventory Generated Successfully."
 
-      # ---------------------------------------------------------
-      # STEP 3: INSTALL DEPENDENCIES
-      # ---------------------------------------------------------
-      - name: Install Ansible & Kubernetes Dependencies
+      - name: Upload Artifacts
+        uses: actions/upload-artifact@v3
+        with:
+          name: deployment-artifacts
+          path: |
+            inventory.ini
+            ansible_key.pem
+          retention-days: 1
+
+  # ---------------------------------------------------------
+  # JOB 2: DEPLOY TO DEV (Automatic)
+  # ---------------------------------------------------------
+  deploy-dev:
+    name: "Deploy Dev"
+    needs: prepare-inventory
+    runs-on: ubuntu-latest
+    environment: dev
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions/download-artifact@v3
+        with: { name: deployment-artifacts }
+      - run: chmod 600 ansible_key.pem
+      
+      - name: Install Ansible Dependencies
         run: |
           pip install kubernetes ansible
           ansible-galaxy collection install kubernetes.core
-          # Also install kubectl for the verification steps
-          curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
-          chmod +x kubectl
-          sudo mv kubectl /usr/local/bin/
+          curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl" && chmod +x kubectl && sudo mv kubectl /usr/local/bin/
 
-      # =========================================================
-      # PHASE 1: DEV DEPLOYMENT & VERIFICATION
-      # =========================================================
-      - name: "Phase 1: Deploy to Dev"
-        working-directory: ./ansible
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::404612059897:role/GitHubActionRole
+          aws-region: us-east-1
+      - run: |
+          SECRET_JSON=$(aws secretsmanager get-secret-value --secret-id prod/datadog/keys --query SecretString --output text)
+          echo "DD_API_KEY=$(echo $SECRET_JSON | jq -r .DD_API_KEY)" >> $GITHUB_ENV
+
+      - name: Run Playbook (DEV)
         run: |
           export ANSIBLE_HOST_KEY_CHECKING=False
-          ansible-playbook -i ../inventory.ini playbook.yml \
-            --private-key ../ansible_key.pem \
+          ansible-playbook -i inventory.ini ansible/deploy_agent.yml \
+            --private-key ansible_key.pem \
             --limit dev \
-            --extra-vars "datadog_api_key=${{ env.DD_API_KEY }}"
+            --extra-vars "datadog_api_key=${{ env.DD_API_KEY }} process_agent_enabled=${{ inputs.process_agent_enabled }} logs_enabled=${{ inputs.logs_enabled }} agent_request_memory=${{ inputs.agent_req_mem }} agent_limit_memory=${{ inputs.agent_lim_mem }} agent_request_cpu=${{ inputs.agent_req_cpu }} agent_limit_cpu=${{ inputs.agent_lim_cpu }}"
 
-      - name: "TEST: Verify Dev Health"
-        working-directory: ./ansible
-        run: |
-          echo "--- STARTING REMOTE HEALTH CHECKS (DEV: MicroK8s) ---"
-          export ANSIBLE_HOST_KEY_CHECKING=False
-          
-          # 1. Check Rollout (Explicitly using microk8s kubectl)
-          # We add /snap/bin to PATH because that is where microk8s lives
-          ansible dev -i ../inventory.ini --private-key ../ansible_key.pem \
-            -u ubuntu --become \
-            -m shell -a "export PATH=\$PATH:/snap/bin; microk8s kubectl rollout status daemonset/datadog-agent -n datadog-agent --timeout=60s"
-          
-          # 2. Check Internals
-          # We use microk8s kubectl to find the pod, then exec into it
-          ansible dev -i ../inventory.ini --private-key ../ansible_key.pem \
-            -u ubuntu --become \
-            -m shell -a "export PATH=\$PATH:/snap/bin; POD=\$(microk8s kubectl get pods -n datadog-agent -l app=datadog-agent -o jsonpath='{.items[0].metadata.name}') && microk8s kubectl exec -n datadog-agent \$POD -- agent status | grep 'Status: Running'"
-          
-          echo "--- DEV HEALTHY ---"
+  # ---------------------------------------------------------
+  # JOB 3: DEPLOY TO TEST (Automatic or Manual - Configurable)
+  # ---------------------------------------------------------
+  deploy-test:
+    name: "Deploy Test"
+    needs: deploy-dev   # <--- WAITS FOR DEV TO FINISH
+    runs-on: ubuntu-latest
+    environment: test   # <--- CAN HAVE ITS OWN PROTECTION RULES
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions/download-artifact@v3
+        with: { name: deployment-artifacts }
+      - run: chmod 600 ansible_key.pem
 
-      # =========================================================
-      # PHASE 2: TEST DEPLOYMENT & VERIFICATION
-      # =========================================================
-      - name: "Phase 2: Deploy to Test"
-        working-directory: ./ansible
+      - name: Install Ansible Dependencies
+        run: |
+          pip install kubernetes ansible
+          ansible-galaxy collection install kubernetes.core
+          curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl" && chmod +x kubectl && sudo mv kubectl /usr/local/bin/
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::404612059897:role/GitHubActionRole
+          aws-region: us-east-1
+      - run: |
+          SECRET_JSON=$(aws secretsmanager get-secret-value --secret-id prod/datadog/keys --query SecretString --output text)
+          echo "DD_API_KEY=$(echo $SECRET_JSON | jq -r .DD_API_KEY)" >> $GITHUB_ENV
+
+      - name: Run Playbook (TEST)
         run: |
           export ANSIBLE_HOST_KEY_CHECKING=False
-          ansible-playbook -i ../inventory.ini playbook.yml \
-            --private-key ../ansible_key.pem \
+          ansible-playbook -i inventory.ini ansible/deploy_agent.yml \
+            --private-key ansible_key.pem \
             --limit test \
-            --extra-vars "datadog_api_key=${{ env.DD_API_KEY }}"
+            --extra-vars "datadog_api_key=${{ env.DD_API_KEY }} process_agent_enabled=${{ inputs.process_agent_enabled }} logs_enabled=${{ inputs.logs_enabled }} agent_request_memory=${{ inputs.agent_req_mem }} agent_limit_memory=${{ inputs.agent_lim_mem }} agent_request_cpu=${{ inputs.agent_req_cpu }} agent_limit_cpu=${{ inputs.agent_lim_cpu }}"
 
-      - name: "TEST: Verify Test Health"
-        working-directory: ./ansible
-        run: |
-          echo "--- STARTING REMOTE HEALTH CHECKS (TEST: MicroK8s) ---"
-          export ANSIBLE_HOST_KEY_CHECKING=False
-          
-          ansible test -i ../inventory.ini --private-key ../ansible_key.pem \
-            -u ubuntu --become \
-            -m shell -a "export PATH=\$PATH:/snap/bin; microk8s kubectl rollout status daemonset/datadog-agent -n datadog-agent --timeout=60s"
-          
-          echo "--- TEST HEALTHY ---"
+  # ---------------------------------------------------------
+  # JOB 4: DEPLOY TO PROD (The Gate)
+  # ---------------------------------------------------------
+  deploy-prod:
+    name: "Deploy Prod"
+    needs: deploy-test  # <--- WAITS FOR TEST TO FINISH
+    runs-on: ubuntu-latest
+    environment: prod   # <--- TRIGGERS THE APPROVAL GATE
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions/download-artifact@v3
+        with: { name: deployment-artifacts }
+      - run: chmod 600 ansible_key.pem
 
-      # =========================================================
-      # PHASE 3: PRODUCTION DEPLOYMENT & VERIFICATION
-      # =========================================================
-      - name: "Phase 3: Deploy to Production"
-        working-directory: ./ansible
+      - name: Install Ansible Dependencies
+        run: |
+          pip install kubernetes ansible
+          ansible-galaxy collection install kubernetes.core
+          curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl" && chmod +x kubectl && sudo mv kubectl /usr/local/bin/
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::404612059897:role/GitHubActionRole
+          aws-region: us-east-1
+      - run: |
+          SECRET_JSON=$(aws secretsmanager get-secret-value --secret-id prod/datadog/keys --query SecretString --output text)
+          echo "DD_API_KEY=$(echo $SECRET_JSON | jq -r .DD_API_KEY)" >> $GITHUB_ENV
+
+      - name: Run Playbook (PROD)
         run: |
           export ANSIBLE_HOST_KEY_CHECKING=False
-          ansible-playbook -i ../inventory.ini playbook.yml \
-            --private-key ../ansible_key.pem \
+          ansible-playbook -i inventory.ini ansible/deploy_agent.yml \
+            --private-key ansible_key.pem \
             --limit prod \
-            --extra-vars "datadog_api_key=${{ env.DD_API_KEY }}"
-
-      - name: "TEST: Verify Prod Health"
-        working-directory: ./ansible
-        run: |
-          echo "--- STARTING REMOTE HEALTH CHECKS (PROD: MicroK8s) ---"
-          export ANSIBLE_HOST_KEY_CHECKING=False
-          
-          ansible prod -i ../inventory.ini --private-key ../ansible_key.pem \
-            -u ubuntu --become \
-            -m shell -a "export PATH=\$PATH:/snap/bin; microk8s kubectl rollout status daemonset/datadog-agent -n datadog-agent --timeout=60s"
-          
-          echo "--- DEPLOYMENT COMPLETE ---"
+            --extra-vars "datadog_api_key=${{ env.DD_API_KEY }} process_agent_enabled=${{ inputs.process_agent_enabled }} logs_enabled=${{ inputs.logs_enabled }} agent_request_memory=${{ inputs.agent_req_mem }} agent_limit_memory=${{ inputs.agent_lim_mem }} agent_request_cpu=${{ inputs.agent_req_cpu }} agent_limit_cpu=${{ inputs.agent_lim_cpu }}"
