@@ -8,6 +8,8 @@
     datadog_site: "datadoghq.com"
     # Ensure lowercase for Kubernetes compatibility
     cluster_name_val: "{{ hostname_alias | lower }}"
+    # Default tag if not passed in inventory
+    env_tag: "dev" 
 
   tasks:
     # -------------------------------------------------------
@@ -50,72 +52,13 @@
       shell: microk8s config > /root/.kube/config
 
     # -------------------------------------------------------
-    # PHASE 2: GENERATE DATADOG CONFIGURATION
+    # PHASE 2: GENERATE CONFIGURATION (Using Template)
     # -------------------------------------------------------
-    - name: Create Datadog Values File (/tmp/datadog-values.yaml)
-      copy:
+    - name: Generate Datadog Values File
+      template:
+        src: templates/datadog-values.j2
         dest: /tmp/datadog-values.yaml
-        content: |
-          datadog:
-            apiKey: "{{ datadog_api_key }}"
-            site: "{{ datadog_site }}"
-            clusterName: "{{ cluster_name_val }}"
-            hostname: "{{ hostname_alias }}"
-            kubelet:
-              tlsVerify: false
-            
-            processAgent:
-              enabled: true
-              processCollection: true
-              
-            logs:
-              enabled: true
-              containerCollectAll: true
-            
-            agents:
-              containers:
-                agent:
-                  resources:
-                    requests:
-                      memory: "256Mi"
-                      cpu: "200m"
-                    limits:
-                      memory: "512Mi"
-                      cpu: "500m"
-
-            # Global Environment Variables
-            env:
-              - name: DD_CLUSTER_NAME
-                value: "{{ cluster_name_val }}"
-              - name: DD_HOSTNAME
-                value: "{{ hostname_alias }}"
-              - name: DD_CLOUD_PROVIDER_METADATA
-                value: "false"
-              - name: DD_EC2_METADATA_ENABLED
-                value: "false"
-              
-              # --- FORCE PROCESS COLLECTION ---
-              - name: DD_PROCESS_CONFIG_PROCESS_COLLECTION_ENABLED
-                value: "true"
-
-            tags:
-              - "env:{{ env_tag }}"
-              - "deploy_method:helm"
-
-          # Cluster Agent config stays at the root
-          clusterAgent:
-            enabled: true
-            replicas: 1
-            env:
-              - name: DD_CLUSTER_NAME
-                value: "{{ cluster_name_val }}"
-          
-          # Orchestrator stays at the root
-          orchestratorExplorer:
-            enabled: true
-          
-          agents:
-            useHostNetwork: true
+        mode: '0644'
 
     # -------------------------------------------------------
     # PHASE 3: DEPLOY DATADOG
