@@ -1,32 +1,7 @@
-name: Secure Sequential Deployment
-on:
-  workflow_dispatch: 
-    inputs:
-      # --- Feature Flags ---
-      process_agent_enabled:
-        description: 'Enable Process Agent?'
-        type: boolean
-        required: true
-        default: true
-      logs_enabled:
-        description: 'Enable Log Collection?'
-        type: boolean
-        required: true
-        default: true
+name: Secure Sequential Deployment (Vars Edition)
 
-      # --- Resource Sizing (The "Profiling" Inputs) ---
-      agent_req_mem:
-        description: 'Memory Request'
-        default: '256Mi'
-      agent_lim_mem:
-        description: 'Memory Limit'
-        default: '512Mi'
-      agent_req_cpu:
-        description: 'CPU Request'
-        default: '200m'
-      agent_lim_cpu:
-        description: 'CPU Limit'
-        default: '500m'
+on:
+  workflow_dispatch: # Manual trigger, but config comes from Repo Vars now
 
 permissions:
   id-token: write
@@ -40,17 +15,14 @@ jobs:
     name: "Gen Inventory"
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout Code
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Configure AWS Credentials
-        uses: aws-actions/configure-aws-credentials@v4
+      - uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: arn:aws:iam::404612059897:role/GitHubActionRole
           aws-region: us-east-1
 
-      - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v3
+      - uses: hashicorp/setup-terraform@v3
 
       - name: Generate Inventory & Key
         working-directory: ./terraform
@@ -75,8 +47,7 @@ jobs:
           echo "[prod]" >> ../inventory.ini
           echo "$PROD_IP env_tag=prod hostname_alias=Datadog-Demo-Prod" >> ../inventory.ini
 
-      - name: Upload Artifacts
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
           name: deployment-artifacts
           path: |
@@ -86,7 +57,7 @@ jobs:
           overwrite: true
 
   # ---------------------------------------------------------
-  # JOB 2: DEPLOY TO DEV (Automatic)
+  # JOB 2: DEPLOY TO DEV
   # ---------------------------------------------------------
   deploy-dev:
     name: "Deploy Dev"
@@ -99,7 +70,7 @@ jobs:
         with: { name: deployment-artifacts }
       - run: chmod 600 ansible_key.pem
       
-      - name: Install Ansible Dependencies
+      - name: Install Dependencies
         run: |
           pip install kubernetes ansible
           ansible-galaxy collection install kubernetes.core
@@ -109,19 +80,27 @@ jobs:
         with:
           role-to-assume: arn:aws:iam::404612059897:role/GitHubActionRole
           aws-region: us-east-1
-      - run: |
+
+      - name: Fetch Secrets
+        run: |
           SECRET_JSON=$(aws secretsmanager get-secret-value --secret-id prod/datadog/keys --query SecretString --output text)
           echo "DD_API_KEY=$(echo $SECRET_JSON | jq -r .DD_API_KEY)" >> $GITHUB_ENV
 
+      # USING REPOSITORY VARIABLES (vars.X)
       - name: Run Playbook (DEV)
         run: |
           export ANSIBLE_HOST_KEY_CHECKING=False
           ansible-playbook -i inventory.ini ansible/playbook.yml \
             --private-key ansible_key.pem \
             --limit dev \
-            --extra-vars "datadog_api_key=${{ env.DD_API_KEY }} process_agent_enabled=${{ inputs.process_agent_enabled }} logs_enabled=${{ inputs.logs_enabled }} agent_request_memory=${{ inputs.agent_req_mem }} agent_limit_memory=${{ inputs.agent_lim_mem }} agent_request_cpu=${{ inputs.agent_req_cpu }} agent_limit_cpu=${{ inputs.agent_lim_cpu }}"
+            --extra-vars "datadog_api_key=${{ env.DD_API_KEY }} \
+            process_agent_enabled=${{ vars.PROCESS_AGENT_ENABLED }} \
+            logs_enabled=${{ vars.LOGS_ENABLED }} \
+            agent_request_memory=${{ vars.AGENT_REQ_MEM }} \
+            agent_limit_memory=${{ vars.AGENT_LIM_MEM }} \
+            agent_request_cpu=${{ vars.AGENT_REQ_CPU }} \
+            agent_limit_cpu=${{ vars.AGENT_LIM_CPU }}"
 
-      # --- HEALTH CHECK RESTORED ---
       - name: "Health Check (DEV)"
         run: |
           echo "--- VERIFYING DEV ROLLOUT ---"
@@ -144,7 +123,7 @@ jobs:
         with: { name: deployment-artifacts }
       - run: chmod 600 ansible_key.pem
 
-      - name: Install Ansible Dependencies
+      - name: Install Dependencies
         run: |
           pip install kubernetes ansible
           ansible-galaxy collection install kubernetes.core
@@ -154,7 +133,9 @@ jobs:
         with:
           role-to-assume: arn:aws:iam::404612059897:role/GitHubActionRole
           aws-region: us-east-1
-      - run: |
+
+      - name: Fetch Secrets
+        run: |
           SECRET_JSON=$(aws secretsmanager get-secret-value --secret-id prod/datadog/keys --query SecretString --output text)
           echo "DD_API_KEY=$(echo $SECRET_JSON | jq -r .DD_API_KEY)" >> $GITHUB_ENV
 
@@ -164,9 +145,14 @@ jobs:
           ansible-playbook -i inventory.ini ansible/playbook.yml \
             --private-key ansible_key.pem \
             --limit test \
-            --extra-vars "datadog_api_key=${{ env.DD_API_KEY }} process_agent_enabled=${{ inputs.process_agent_enabled }} logs_enabled=${{ inputs.logs_enabled }} agent_request_memory=${{ inputs.agent_req_mem }} agent_limit_memory=${{ inputs.agent_lim_mem }} agent_request_cpu=${{ inputs.agent_req_cpu }} agent_limit_cpu=${{ inputs.agent_lim_cpu }}"
+            --extra-vars "datadog_api_key=${{ env.DD_API_KEY }} \
+            process_agent_enabled=${{ vars.PROCESS_AGENT_ENABLED }} \
+            logs_enabled=${{ vars.LOGS_ENABLED }} \
+            agent_request_memory=${{ vars.AGENT_REQ_MEM }} \
+            agent_limit_memory=${{ vars.AGENT_LIM_MEM }} \
+            agent_request_cpu=${{ vars.AGENT_REQ_CPU }} \
+            agent_limit_cpu=${{ vars.AGENT_LIM_CPU }}"
 
-      # --- HEALTH CHECK RESTORED ---
       - name: "Health Check (TEST)"
         run: |
           echo "--- VERIFYING TEST ROLLOUT ---"
@@ -176,7 +162,7 @@ jobs:
             -m shell -a "export PATH=\$PATH:/snap/bin; microk8s kubectl rollout status daemonset/datadog-agent -n datadog-agent --timeout=60s"
 
   # ---------------------------------------------------------
-  # JOB 4: DEPLOY TO PROD (The Gate)
+  # JOB 4: DEPLOY TO PROD
   # ---------------------------------------------------------
   deploy-prod:
     name: "Deploy Prod"
@@ -189,7 +175,7 @@ jobs:
         with: { name: deployment-artifacts }
       - run: chmod 600 ansible_key.pem
 
-      - name: Install Ansible Dependencies
+      - name: Install Dependencies
         run: |
           pip install kubernetes ansible
           ansible-galaxy collection install kubernetes.core
@@ -199,7 +185,9 @@ jobs:
         with:
           role-to-assume: arn:aws:iam::404612059897:role/GitHubActionRole
           aws-region: us-east-1
-      - run: |
+
+      - name: Fetch Secrets
+        run: |
           SECRET_JSON=$(aws secretsmanager get-secret-value --secret-id prod/datadog/keys --query SecretString --output text)
           echo "DD_API_KEY=$(echo $SECRET_JSON | jq -r .DD_API_KEY)" >> $GITHUB_ENV
 
@@ -209,9 +197,14 @@ jobs:
           ansible-playbook -i inventory.ini ansible/playbook.yml \
             --private-key ansible_key.pem \
             --limit prod \
-            --extra-vars "datadog_api_key=${{ env.DD_API_KEY }} process_agent_enabled=${{ inputs.process_agent_enabled }} logs_enabled=${{ inputs.logs_enabled }} agent_request_memory=${{ inputs.agent_req_mem }} agent_limit_memory=${{ inputs.agent_lim_mem }} agent_request_cpu=${{ inputs.agent_req_cpu }} agent_limit_cpu=${{ inputs.agent_lim_cpu }}"
+            --extra-vars "datadog_api_key=${{ env.DD_API_KEY }} \
+            process_agent_enabled=${{ vars.PROCESS_AGENT_ENABLED }} \
+            logs_enabled=${{ vars.LOGS_ENABLED }} \
+            agent_request_memory=${{ vars.AGENT_REQ_MEM }} \
+            agent_limit_memory=${{ vars.AGENT_LIM_MEM }} \
+            agent_request_cpu=${{ vars.AGENT_REQ_CPU }} \
+            agent_limit_cpu=${{ vars.AGENT_LIM_CPU }}"
 
-      # --- HEALTH CHECK RESTORED ---
       - name: "Health Check (PROD)"
         run: |
           echo "--- VERIFYING PROD ROLLOUT ---"
