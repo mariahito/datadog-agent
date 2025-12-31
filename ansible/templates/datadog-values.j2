@@ -1,0 +1,61 @@
+# templates/datadog-values.j2
+datadog:
+  apiKey: "{{ datadog_api_key }}"
+  site: "{{ datadog_site }}"
+  clusterName: "{{ cluster_name_val }}"
+  hostname: "{{ hostname_alias }}"
+  kubelet:
+    tlsVerify: false
+  
+  processAgent:
+    enabled: true
+    processCollection: true
+    
+  logs:
+    enabled: true
+    containerCollectAll: true
+    
+  # Resource Limits for the Node Agent
+  agents:
+    containers:
+      agent:
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "200m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+    
+    # Global Environment Variables
+    env:
+      - name: DD_CLUSTER_NAME
+        value: "{{ cluster_name_val }}"
+      - name: DD_HOSTNAME
+        value: "{{ hostname_alias }}"
+      - name: DD_CLOUD_PROVIDER_METADATA
+        value: "false"
+      - name: DD_EC2_METADATA_ENABLED
+        value: "false"
+      # --- FORCE PROCESS COLLECTION ---
+      - name: DD_PROCESS_CONFIG_PROCESS_COLLECTION_ENABLED
+        value: "true"
+
+  tags:
+    - "env:{{ env_tag }}"
+    - "deploy_method:helm"
+
+# Cluster Agent config
+clusterAgent:
+  enabled: true
+  replicas: 1
+  env:
+    - name: DD_CLUSTER_NAME
+      value: "{{ cluster_name_val }}"
+
+# Orchestrator
+orchestratorExplorer:
+  enabled: true
+
+agents:
+  useHostNetwork: true
