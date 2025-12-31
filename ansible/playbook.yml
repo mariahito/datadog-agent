@@ -64,11 +64,24 @@
             kubelet:
               tlsVerify: false
             
-            # --- FIX: PROCESS AGENT MUST BE HERE (INDENTED) ---
             processAgent:
               enabled: true
               processCollection: true
-            # --------------------------------------------------
+              
+            logs:
+              enabled: true
+              containerCollectAll: true
+            
+            agents:
+              containers:
+                agent:
+                  resources:
+                    requests:
+                      memory: "256Mi"
+                      cpu: "200m"
+                    limits:
+                      memory: "512Mi"
+                      cpu: "500m"
 
             # Global Environment Variables
             env:
