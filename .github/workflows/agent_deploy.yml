@@ -1,64 +1,147 @@
-name: 2. Deploy Agent (Ansible + K8s)
-
+name: Secure Sequential Deployment
 on:
-  workflow_dispatch: # Manual trigger
+  workflow_dispatch: 
+
+permissions:
+  id-token: write   # Allows GitHub to request a token from AWS
+  contents: read    # Allows GitHub to check out the code
 
 jobs:
-  configure:
+  deploy-sequence:
+    name: "Secure Rollout (Dev -> Test -> Prod)"
     runs-on: ubuntu-latest
-    env:
-      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-      DD_API_KEY: ${{ secrets.DD_API_KEY }}
-
     steps:
       - name: Checkout Code
-        uses: actions/checkout@v2
+        uses: actions/checkout@v3
 
       # ---------------------------------------------------------
-      # PHASE 1: FETCH STATE (The "Glue" between pipelines)
+      # STEP 1: AUTHENTICATION (OIDC) & SECRETS
+      # Replaces static secrets with temporary credentials
+      # ---------------------------------------------------------
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          # Replace with your actual IAM Role ARN
+          role-to-assume: arn:aws:iam::YOUR_ACCOUNT_ID:role/GitHubActionRole
+          aws-region: us-east-1
+
+      - name: Retrieve Datadog Key from Secrets Manager
+        id: secrets
+        run: |
+          SECRET_JSON=$(aws secretsmanager get-secret-value --secret-id prod/datadog/keys --query SecretString --output text)
+          DD_API_KEY=$(echo $SECRET_JSON | jq -r .DD_API_KEY)
+          echo "::add-mask::$DD_API_KEY"
+          echo "DD_API_KEY=$DD_API_KEY" >> $GITHUB_ENV
+
+      # ---------------------------------------------------------
+      # STEP 2: SETUP INFRASTRUCTURE STATE (Your Original Logic)
+      # We need IPs and Keys before we can deploy
       # ---------------------------------------------------------
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
 
-      - name: Fetch Infrastructure State
+      - name: Fetch Infrastructure State & Build Inventory
         id: tf-state
         working-directory: ./terraform
         run: |
           terraform init
           
-          # 1. Retrieve IPs from Remote State
+          # 1. Retrieve IPs
           DEV_IP=$(terraform output -raw dev_ip)
           TEST_IP=$(terraform output -raw test_ip)
           PROD_IP=$(terraform output -raw prod_ip)
           
-          # 2. Retrieve the SSH Private Key from Remote State
+          # 2. Retrieve SSH Key
           terraform output -raw private_key > ../ansible_key.pem
-          chmod 400 ../ansible_key.pem
+          chmod 600 ../ansible_key.pem
           
-          # 3. Build Inventory File
+          # 3. Build Inventory File (Note: Group names are lowercase)
           echo "[dev]" > ../inventory.ini
-          echo "$DEV_IP env_tag=dev hostname_alias=Datadog-Demo-Dev" >> ../inventory.ini
+          echo "$DEV_IP env_tag=dev" >> ../inventory.ini
           
           echo "[test]" >> ../inventory.ini
-          echo "$TEST_IP env_tag=test hostname_alias=Datadog-Demo-Test" >> ../inventory.ini
+          echo "$TEST_IP env_tag=test" >> ../inventory.ini
           
           echo "[prod]" >> ../inventory.ini
-          echo "$PROD_IP env_tag=prod hostname_alias=Datadog-Demo-Prod" >> ../inventory.ini
+          echo "$PROD_IP env_tag=prod" >> ../inventory.ini
           
           echo "Inventory Generated Successfully."
 
       # ---------------------------------------------------------
-      # PHASE 2: DEPLOY KUBERNETES & AGENT
+      # STEP 3: INSTALL DEPENDENCIES
       # ---------------------------------------------------------
-      - name: Install Ansible K8s Dependencies
+      - name: Install Ansible & Kubernetes Dependencies
         run: |
-          pip install kubernetes
+          pip install kubernetes ansible
           ansible-galaxy collection install kubernetes.core
+          # Also install kubectl for the verification steps
+          curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+          chmod +x kubectl
+          sudo mv kubectl /usr/local/bin/
 
-      - name: Run Ansible Playbook
+      # =========================================================
+      # PHASE 1: DEV DEPLOYMENT & VERIFICATION
+      # =========================================================
+      - name: "Phase 1: Deploy to Dev"
         working-directory: ./ansible
         run: |
           export ANSIBLE_HOST_KEY_CHECKING=False
           ansible-playbook -i ../inventory.ini playbook.yml \
-            --private-key ../ansible_key.pem
+            --private-key ../ansible_key.pem \
+            --limit dev \
+            --extra-vars "datadog_api_key=${{ env.DD_API_KEY }}"
+
+      - name: "TEST: Verify Dev Health"
+        run: |
+          # 1. Connect kubectl to the DEV Cluster (using AWS CLI)
+          aws eks update-kubeconfig --name datadog-demo-dev --region us-east-1
+          
+          echo "--- STARTING AUTOMATED HEALTH CHECKS (DEV) ---"
+          kubectl rollout status daemonset/datadog-agent -n datadog-agent --timeout=60s
+          
+          # Internal check
+          POD_NAME=$(kubectl get pods -n datadog-agent -l app=datadog-agent -o jsonpath="{.items[0].metadata.name}")
+          kubectl exec -n datadog-agent $POD_NAME -- agent status | grep "Status: Running"
+          echo "--- DEV HEALTHY ---"
+
+      # =========================================================
+      # PHASE 2: TEST DEPLOYMENT & VERIFICATION
+      # =========================================================
+      - name: "Phase 2: Deploy to Test"
+        working-directory: ./ansible
+        run: |
+          export ANSIBLE_HOST_KEY_CHECKING=False
+          ansible-playbook -i ../inventory.ini playbook.yml \
+            --private-key ../ansible_key.pem \
+            --limit test \
+            --extra-vars "datadog_api_key=${{ env.DD_API_KEY }}"
+
+      - name: "TEST: Verify Test Health"
+        run: |
+          # Switch context to TEST Cluster
+          aws eks update-kubeconfig --name datadog-demo-test --region us-east-1
+          
+          echo "--- STARTING AUTOMATED HEALTH CHECKS (TEST) ---"
+          kubectl rollout status daemonset/datadog-agent -n datadog-agent --timeout=60s
+          echo "--- TEST HEALTHY ---"
+
+      # =========================================================
+      # PHASE 3: PRODUCTION DEPLOYMENT & VERIFICATION
+      # =========================================================
+      - name: "Phase 3: Deploy to Production"
+        working-directory: ./ansible
+        run: |
+          export ANSIBLE_HOST_KEY_CHECKING=False
+          ansible-playbook -i ../inventory.ini playbook.yml \
+            --private-key ../ansible_key.pem \
+            --limit prod \
+            --extra-vars "datadog_api_key=${{ env.DD_API_KEY }}"
+
+      - name: "TEST: Verify Prod Health"
+        run: |
+          # Switch context to PROD Cluster
+          aws eks update-kubeconfig --name datadog-demo-prod --region us-east-1
+          
+          echo "--- STARTING AUTOMATED HEALTH CHECKS (PROD) ---"
+          kubectl rollout status daemonset/datadog-agent -n datadog-agent --timeout=60s
+          echo "--- DEPLOYMENT COMPLETE ---"
