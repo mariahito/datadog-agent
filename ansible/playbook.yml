@@ -126,11 +126,17 @@
         repo_url: https://helm.datadoghq.com
         binary_path: /snap/bin/microk8s.helm
 
+    - name: Ensure Datadog Namespace Exists
+      shell: microk8s kubectl create namespace datadog-agent --dry-run=client -o yaml | microk8s kubectl apply -f -
+      register: ns_create
+      changed_when: "'created' in ns_create.stdout"
+
     - name: Deploy Datadog Agent (From Values File)
       command: >
         /snap/bin/microk8s.helm upgrade --install datadog-agent datadog/datadog
         -f /tmp/datadog-values.yaml
-        --namespace default
+        --namespace datadog-agent
+        --create-namespace
       environment:
         KUBECONFIG: /root/.kube/config
 
