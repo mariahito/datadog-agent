@@ -1,4 +1,3 @@
-# templates/datadog-values.j2
 datadog:
   apiKey: "{{ datadog_api_key }}"
   site: "{{ datadog_site }}"
@@ -8,12 +7,14 @@ datadog:
     tlsVerify: false
   
   processAgent:
-    enabled: true
-    processCollection: true
+    # Controls if the Process Agent container runs
+    enabled: {{ process_agent_enabled | lower }}
+    # Controls if it actually collects process data
+    processCollection: {{ process_agent_enabled | lower }}
     
   logs:
-    enabled: true
-    containerCollectAll: true
+    enabled: {{ logs_enabled | lower }}
+    containerCollectAll: {{ logs_enabled | lower }}
     
   # Resource Limits for the Node Agent
   agents:
@@ -21,11 +22,11 @@ datadog:
       agent:
         resources:
           requests:
-            memory: "256Mi"
-            cpu: "200m"
+            memory: "{{ agent_request_memory }}"
+            cpu: "{{ agent_request_cpu }}"
           limits:
-            memory: "512Mi"
-            cpu: "500m"
+            memory: "{{ agent_limit_memory }}"
+            cpu: "{{ agent_limit_cpu }}"
     
     # Global Environment Variables
     env:
@@ -39,7 +40,7 @@ datadog:
         value: "false"
       # --- FORCE PROCESS COLLECTION ---
       - name: DD_PROCESS_CONFIG_PROCESS_COLLECTION_ENABLED
-        value: "true"
+        value: "{{ process_agent_enabled | lower }}"
 
   tags:
     - "env:{{ env_tag }}"
