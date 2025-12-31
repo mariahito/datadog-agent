@@ -33,6 +33,8 @@
           - "TARGET HOST:    {{ inventory_hostname }}"
           - "HOSTNAME ALIAS: {{ hostname_alias }}"
           - "CLUSTER NAME:   {{ cluster_name_val }}"
+          - "ENV TAG:        {{ env_tag }}" 
+          - "MEMORY LIMIT:   {{ agent_limit_memory }}"
           - "---------------------------------------------------"
 
     # -------------------------------------------------------
