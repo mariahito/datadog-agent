@@ -41,7 +41,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Code
-        uses: actions/checkout@v4  # UPDATED to v4
+        uses: actions/checkout@v4
 
       - name: Configure AWS Credentials
         uses: aws-actions/configure-aws-credentials@v4
@@ -76,7 +76,7 @@ jobs:
           echo "$PROD_IP env_tag=prod hostname_alias=Datadog-Demo-Prod" >> ../inventory.ini
 
       - name: Upload Artifacts
-        uses: actions/upload-artifact@v4  # UPDATED to v4
+        uses: actions/upload-artifact@v4
         with:
           name: deployment-artifacts
           path: |
@@ -94,9 +94,9 @@ jobs:
     runs-on: ubuntu-latest
     environment: dev
     steps:
-      - uses: actions/checkout@v4  # UPDATED to v4
+      - uses: actions/checkout@v4
       
-      - uses: actions/download-artifact@v4  # UPDATED to v4
+      - uses: actions/download-artifact@v4
         with: 
           name: deployment-artifacts
           
@@ -119,13 +119,14 @@ jobs:
       - name: Run Playbook (DEV)
         run: |
           export ANSIBLE_HOST_KEY_CHECKING=False
-          ansible-playbook -i inventory.ini ansible/deploy_agent.yml \
+          # FIXED: Pointing to ansible/playbook.yml
+          ansible-playbook -i inventory.ini ansible/playbook.yml \
             --private-key ansible_key.pem \
             --limit dev \
             --extra-vars "datadog_api_key=${{ env.DD_API_KEY }} process_agent_enabled=${{ inputs.process_agent_enabled }} logs_enabled=${{ inputs.logs_enabled }} agent_request_memory=${{ inputs.agent_req_mem }} agent_limit_memory=${{ inputs.agent_lim_mem }} agent_request_cpu=${{ inputs.agent_req_cpu }} agent_limit_cpu=${{ inputs.agent_lim_cpu }}"
 
   # ---------------------------------------------------------
-  # JOB 3: DEPLOY TO TEST (Automatic or Manual)
+  # JOB 3: DEPLOY TO TEST
   # ---------------------------------------------------------
   deploy-test:
     name: "Deploy Test"
@@ -133,9 +134,9 @@ jobs:
     runs-on: ubuntu-latest
     environment: test
     steps:
-      - uses: actions/checkout@v4  # UPDATED to v4
+      - uses: actions/checkout@v4
       
-      - uses: actions/download-artifact@v4  # UPDATED to v4
+      - uses: actions/download-artifact@v4
         with: 
           name: deployment-artifacts
           
@@ -158,7 +159,8 @@ jobs:
       - name: Run Playbook (TEST)
         run: |
           export ANSIBLE_HOST_KEY_CHECKING=False
-          ansible-playbook -i inventory.ini ansible/deploy_agent.yml \
+          # FIXED: Pointing to ansible/playbook.yml
+          ansible-playbook -i inventory.ini ansible/playbook.yml \
             --private-key ansible_key.pem \
             --limit test \
             --extra-vars "datadog_api_key=${{ env.DD_API_KEY }} process_agent_enabled=${{ inputs.process_agent_enabled }} logs_enabled=${{ inputs.logs_enabled }} agent_request_memory=${{ inputs.agent_req_mem }} agent_limit_memory=${{ inputs.agent_lim_mem }} agent_request_cpu=${{ inputs.agent_req_cpu }} agent_limit_cpu=${{ inputs.agent_lim_cpu }}"
@@ -172,9 +174,9 @@ jobs:
     runs-on: ubuntu-latest
     environment: prod
     steps:
-      - uses: actions/checkout@v4  # UPDATED to v4
+      - uses: actions/checkout@v4
       
-      - uses: actions/download-artifact@v4  # UPDATED to v4
+      - uses: actions/download-artifact@v4
         with: 
           name: deployment-artifacts
           
@@ -197,7 +199,8 @@ jobs:
       - name: Run Playbook (PROD)
         run: |
           export ANSIBLE_HOST_KEY_CHECKING=False
-          ansible-playbook -i inventory.ini ansible/deploy_agent.yml \
+          # FIXED: Pointing to ansible/playbook.yml
+          ansible-playbook -i inventory.ini ansible/playbook.yml \
             --private-key ansible_key.pem \
             --limit prod \
             --extra-vars "datadog_api_key=${{ env.DD_API_KEY }} process_agent_enabled=${{ inputs.process_agent_enabled }} logs_enabled=${{ inputs.logs_enabled }} agent_request_memory=${{ inputs.agent_req_mem }} agent_limit_memory=${{ inputs.agent_lim_mem }} agent_request_cpu=${{ inputs.agent_req_cpu }} agent_limit_cpu=${{ inputs.agent_lim_cpu }}"
