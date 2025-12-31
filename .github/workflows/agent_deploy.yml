@@ -83,7 +83,9 @@ jobs:
 
       - name: Fetch Secrets
         run: |
-          SECRET_JSON=$(aws secretsmanager get-secret-value --secret-id prod/datadog/keys --query SecretString --output text)
+          # Added --region us-east-1 explicitly to fix the error
+          SECRET_JSON=$(aws secretsmanager get-secret-value --secret-id prod/datadog/keys --region us-east-1 --query SecretString --output text)
+          
           echo "DD_API_KEY=$(echo $SECRET_JSON | jq -r .DD_API_KEY)" >> $GITHUB_ENV
 
       # USING REPOSITORY VARIABLES (vars.X)
@@ -136,7 +138,9 @@ jobs:
 
       - name: Fetch Secrets
         run: |
-          SECRET_JSON=$(aws secretsmanager get-secret-value --secret-id prod/datadog/keys --query SecretString --output text)
+          # Added --region us-east-1 explicitly to fix the error
+          SECRET_JSON=$(aws secretsmanager get-secret-value --secret-id prod/datadog/keys --region us-east-1 --query SecretString --output text)
+          
           echo "DD_API_KEY=$(echo $SECRET_JSON | jq -r .DD_API_KEY)" >> $GITHUB_ENV
 
       - name: Run Playbook (TEST)
@@ -188,7 +192,9 @@ jobs:
 
       - name: Fetch Secrets
         run: |
-          SECRET_JSON=$(aws secretsmanager get-secret-value --secret-id prod/datadog/keys --query SecretString --output text)
+          # Added --region us-east-1 explicitly to fix the error
+          SECRET_JSON=$(aws secretsmanager get-secret-value --secret-id prod/datadog/keys --region us-east-1 --query SecretString --output text)
+          
           echo "DD_API_KEY=$(echo $SECRET_JSON | jq -r .DD_API_KEY)" >> $GITHUB_ENV
 
       - name: Run Playbook (PROD)
