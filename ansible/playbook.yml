@@ -8,7 +8,7 @@
     datadog_api_key: "{{ lookup('env', 'DD_API_KEY') }}"
     datadog_site: "datadoghq.com"
     cluster_name_val: "{{ hostname_alias | lower }}"
-    env_tag: "{{ lookup('env', 'DD_ENV_TAG') | default('dev', true) }}"
+    #env_tag: "{{ lookup('env', 'DD_ENV_TAG') | default('dev', true) }}"
 
     # --- Feature Flags (Boolean) ---
     # Default to 'true' if not specified in Pipeline
