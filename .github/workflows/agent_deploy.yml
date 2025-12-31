@@ -95,11 +95,8 @@ jobs:
     environment: dev
     steps:
       - uses: actions/checkout@v4
-      
       - uses: actions/download-artifact@v4
-        with: 
-          name: deployment-artifacts
-          
+        with: { name: deployment-artifacts }
       - run: chmod 600 ansible_key.pem
       
       - name: Install Ansible Dependencies
@@ -119,11 +116,19 @@ jobs:
       - name: Run Playbook (DEV)
         run: |
           export ANSIBLE_HOST_KEY_CHECKING=False
-          # FIXED: Pointing to ansible/playbook.yml
           ansible-playbook -i inventory.ini ansible/playbook.yml \
             --private-key ansible_key.pem \
             --limit dev \
             --extra-vars "datadog_api_key=${{ env.DD_API_KEY }} process_agent_enabled=${{ inputs.process_agent_enabled }} logs_enabled=${{ inputs.logs_enabled }} agent_request_memory=${{ inputs.agent_req_mem }} agent_limit_memory=${{ inputs.agent_lim_mem }} agent_request_cpu=${{ inputs.agent_req_cpu }} agent_limit_cpu=${{ inputs.agent_lim_cpu }}"
+
+      # --- HEALTH CHECK RESTORED ---
+      - name: "Health Check (DEV)"
+        run: |
+          echo "--- VERIFYING DEV ROLLOUT ---"
+          export ANSIBLE_HOST_KEY_CHECKING=False
+          ansible dev -i inventory.ini --private-key ansible_key.pem \
+            -u ubuntu --become \
+            -m shell -a "export PATH=\$PATH:/snap/bin; microk8s kubectl rollout status daemonset/datadog-agent -n datadog-agent --timeout=60s"
 
   # ---------------------------------------------------------
   # JOB 3: DEPLOY TO TEST
@@ -135,11 +140,8 @@ jobs:
     environment: test
     steps:
       - uses: actions/checkout@v4
-      
       - uses: actions/download-artifact@v4
-        with: 
-          name: deployment-artifacts
-          
+        with: { name: deployment-artifacts }
       - run: chmod 600 ansible_key.pem
 
       - name: Install Ansible Dependencies
@@ -159,11 +161,19 @@ jobs:
       - name: Run Playbook (TEST)
         run: |
           export ANSIBLE_HOST_KEY_CHECKING=False
-          # FIXED: Pointing to ansible/playbook.yml
           ansible-playbook -i inventory.ini ansible/playbook.yml \
             --private-key ansible_key.pem \
             --limit test \
             --extra-vars "datadog_api_key=${{ env.DD_API_KEY }} process_agent_enabled=${{ inputs.process_agent_enabled }} logs_enabled=${{ inputs.logs_enabled }} agent_request_memory=${{ inputs.agent_req_mem }} agent_limit_memory=${{ inputs.agent_lim_mem }} agent_request_cpu=${{ inputs.agent_req_cpu }} agent_limit_cpu=${{ inputs.agent_lim_cpu }}"
+
+      # --- HEALTH CHECK RESTORED ---
+      - name: "Health Check (TEST)"
+        run: |
+          echo "--- VERIFYING TEST ROLLOUT ---"
+          export ANSIBLE_HOST_KEY_CHECKING=False
+          ansible test -i inventory.ini --private-key ansible_key.pem \
+            -u ubuntu --become \
+            -m shell -a "export PATH=\$PATH:/snap/bin; microk8s kubectl rollout status daemonset/datadog-agent -n datadog-agent --timeout=60s"
 
   # ---------------------------------------------------------
   # JOB 4: DEPLOY TO PROD (The Gate)
@@ -175,11 +185,8 @@ jobs:
     environment: prod
     steps:
       - uses: actions/checkout@v4
-      
       - uses: actions/download-artifact@v4
-        with: 
-          name: deployment-artifacts
-          
+        with: { name: deployment-artifacts }
       - run: chmod 600 ansible_key.pem
 
       - name: Install Ansible Dependencies
@@ -199,8 +206,16 @@ jobs:
       - name: Run Playbook (PROD)
         run: |
           export ANSIBLE_HOST_KEY_CHECKING=False
-          # FIXED: Pointing to ansible/playbook.yml
           ansible-playbook -i inventory.ini ansible/playbook.yml \
             --private-key ansible_key.pem \
             --limit prod \
             --extra-vars "datadog_api_key=${{ env.DD_API_KEY }} process_agent_enabled=${{ inputs.process_agent_enabled }} logs_enabled=${{ inputs.logs_enabled }} agent_request_memory=${{ inputs.agent_req_mem }} agent_limit_memory=${{ inputs.agent_lim_mem }} agent_request_cpu=${{ inputs.agent_req_cpu }} agent_limit_cpu=${{ inputs.agent_lim_cpu }}"
+
+      # --- HEALTH CHECK RESTORED ---
+      - name: "Health Check (PROD)"
+        run: |
+          echo "--- VERIFYING PROD ROLLOUT ---"
+          export ANSIBLE_HOST_KEY_CHECKING=False
+          ansible prod -i inventory.ini --private-key ansible_key.pem \
+            -u ubuntu --become \
+            -m shell -a "export PATH=\$PATH:/snap/bin; microk8s kubectl rollout status daemonset/datadog-agent -n datadog-agent --timeout=60s"
