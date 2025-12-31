@@ -94,20 +94,20 @@ jobs:
       - name: "TEST: Verify Dev Health"
         working-directory: ./ansible
         run: |
-          echo "--- STARTING REMOTE HEALTH CHECKS (DEV) ---"
+          echo "--- STARTING REMOTE HEALTH CHECKS (DEV: MicroK8s) ---"
           export ANSIBLE_HOST_KEY_CHECKING=False
           
-          # We use Ansible to run 'kubectl' directly on the remote server
-          # 1. Check if DaemonSet is rolled out
+          # 1. Check Rollout (Explicitly using microk8s kubectl)
+          # We add /snap/bin to PATH because that is where microk8s lives
           ansible dev -i ../inventory.ini --private-key ../ansible_key.pem \
             -u ubuntu --become \
-            -m shell -a "kubectl rollout status daemonset/datadog-agent -n datadog-agent --timeout=60s"
+            -m shell -a "export PATH=\$PATH:/snap/bin; microk8s kubectl rollout status daemonset/datadog-agent -n datadog-agent --timeout=60s"
           
-          # 2. Check Agent Internals
-          # We run a remote shell command to find the pod name and query it
+          # 2. Check Internals
+          # We use microk8s kubectl to find the pod, then exec into it
           ansible dev -i ../inventory.ini --private-key ../ansible_key.pem \
             -u ubuntu --become \
-            -m shell -a "POD=\$(kubectl get pods -n datadog-agent -l app=datadog-agent -o jsonpath='{.items[0].metadata.name}') && kubectl exec -n datadog-agent \$POD -- agent status | grep 'Status: Running'"
+            -m shell -a "export PATH=\$PATH:/snap/bin; POD=\$(microk8s kubectl get pods -n datadog-agent -l app=datadog-agent -o jsonpath='{.items[0].metadata.name}') && microk8s kubectl exec -n datadog-agent \$POD -- agent status | grep 'Status: Running'"
           
           echo "--- DEV HEALTHY ---"
 
@@ -126,13 +126,12 @@ jobs:
       - name: "TEST: Verify Test Health"
         working-directory: ./ansible
         run: |
-          echo "--- STARTING REMOTE HEALTH CHECKS (TEST) ---"
+          echo "--- STARTING REMOTE HEALTH CHECKS (TEST: MicroK8s) ---"
           export ANSIBLE_HOST_KEY_CHECKING=False
           
-          # 1. Check Rollout
           ansible test -i ../inventory.ini --private-key ../ansible_key.pem \
             -u ubuntu --become \
-            -m shell -a "kubectl rollout status daemonset/datadog-agent -n datadog-agent --timeout=60s"
+            -m shell -a "export PATH=\$PATH:/snap/bin; microk8s kubectl rollout status daemonset/datadog-agent -n datadog-agent --timeout=60s"
           
           echo "--- TEST HEALTHY ---"
 
@@ -151,12 +150,11 @@ jobs:
       - name: "TEST: Verify Prod Health"
         working-directory: ./ansible
         run: |
-          echo "--- STARTING REMOTE HEALTH CHECKS (PROD) ---"
+          echo "--- STARTING REMOTE HEALTH CHECKS (PROD: MicroK8s) ---"
           export ANSIBLE_HOST_KEY_CHECKING=False
           
-          # 1. Check Rollout
           ansible prod -i ../inventory.ini --private-key ../ansible_key.pem \
             -u ubuntu --become \
-            -m shell -a "kubectl rollout status daemonset/datadog-agent -n datadog-agent --timeout=60s"
+            -m shell -a "export PATH=\$PATH:/snap/bin; microk8s kubectl rollout status daemonset/datadog-agent -n datadog-agent --timeout=60s"
           
           echo "--- DEPLOYMENT COMPLETE ---"
