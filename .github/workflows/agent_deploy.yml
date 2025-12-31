@@ -41,7 +41,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4  # UPDATED to v4
 
       - name: Configure AWS Credentials
         uses: aws-actions/configure-aws-credentials@v4
@@ -76,13 +76,14 @@ jobs:
           echo "$PROD_IP env_tag=prod hostname_alias=Datadog-Demo-Prod" >> ../inventory.ini
 
       - name: Upload Artifacts
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4  # UPDATED to v4
         with:
           name: deployment-artifacts
           path: |
             inventory.ini
             ansible_key.pem
           retention-days: 1
+          overwrite: true
 
   # ---------------------------------------------------------
   # JOB 2: DEPLOY TO DEV (Automatic)
@@ -93,9 +94,12 @@ jobs:
     runs-on: ubuntu-latest
     environment: dev
     steps:
-      - uses: actions/checkout@v3
-      - uses: actions/download-artifact@v3
-        with: { name: deployment-artifacts }
+      - uses: actions/checkout@v4  # UPDATED to v4
+      
+      - uses: actions/download-artifact@v4  # UPDATED to v4
+        with: 
+          name: deployment-artifacts
+          
       - run: chmod 600 ansible_key.pem
       
       - name: Install Ansible Dependencies
@@ -121,17 +125,20 @@ jobs:
             --extra-vars "datadog_api_key=${{ env.DD_API_KEY }} process_agent_enabled=${{ inputs.process_agent_enabled }} logs_enabled=${{ inputs.logs_enabled }} agent_request_memory=${{ inputs.agent_req_mem }} agent_limit_memory=${{ inputs.agent_lim_mem }} agent_request_cpu=${{ inputs.agent_req_cpu }} agent_limit_cpu=${{ inputs.agent_lim_cpu }}"
 
   # ---------------------------------------------------------
-  # JOB 3: DEPLOY TO TEST (Automatic or Manual - Configurable)
+  # JOB 3: DEPLOY TO TEST (Automatic or Manual)
   # ---------------------------------------------------------
   deploy-test:
     name: "Deploy Test"
-    needs: deploy-dev   # <--- WAITS FOR DEV TO FINISH
+    needs: deploy-dev
     runs-on: ubuntu-latest
-    environment: test   # <--- CAN HAVE ITS OWN PROTECTION RULES
+    environment: test
     steps:
-      - uses: actions/checkout@v3
-      - uses: actions/download-artifact@v3
-        with: { name: deployment-artifacts }
+      - uses: actions/checkout@v4  # UPDATED to v4
+      
+      - uses: actions/download-artifact@v4  # UPDATED to v4
+        with: 
+          name: deployment-artifacts
+          
       - run: chmod 600 ansible_key.pem
 
       - name: Install Ansible Dependencies
@@ -161,13 +168,16 @@ jobs:
   # ---------------------------------------------------------
   deploy-prod:
     name: "Deploy Prod"
-    needs: deploy-test  # <--- WAITS FOR TEST TO FINISH
+    needs: deploy-test
     runs-on: ubuntu-latest
-    environment: prod   # <--- TRIGGERS THE APPROVAL GATE
+    environment: prod
     steps:
-      - uses: actions/checkout@v3
-      - uses: actions/download-artifact@v3
-        with: { name: deployment-artifacts }
+      - uses: actions/checkout@v4  # UPDATED to v4
+      
+      - uses: actions/download-artifact@v4  # UPDATED to v4
+        with: 
+          name: deployment-artifacts
+          
       - run: chmod 600 ansible_key.pem
 
       - name: Install Ansible Dependencies
