@@ -92,16 +92,23 @@ jobs:
             --extra-vars "datadog_api_key=${{ env.DD_API_KEY }}"
 
       - name: "TEST: Verify Dev Health"
+        working-directory: ./ansible
         run: |
-          # 1. Connect kubectl to the DEV Cluster (using AWS CLI)
-          aws eks update-kubeconfig --name datadog-demo-dev --region us-east-1
+          echo "--- STARTING REMOTE HEALTH CHECKS (DEV) ---"
+          export ANSIBLE_HOST_KEY_CHECKING=False
           
-          echo "--- STARTING AUTOMATED HEALTH CHECKS (DEV) ---"
-          kubectl rollout status daemonset/datadog-agent -n datadog-agent --timeout=60s
+          # We use Ansible to run 'kubectl' directly on the remote server
+          # 1. Check if DaemonSet is rolled out
+          ansible dev -i ../inventory.ini --private-key ../ansible_key.pem \
+            -u ubuntu --become \
+            -m shell -a "kubectl rollout status daemonset/datadog-agent -n datadog-agent --timeout=60s"
           
-          # Internal check
-          POD_NAME=$(kubectl get pods -n datadog-agent -l app=datadog-agent -o jsonpath="{.items[0].metadata.name}")
-          kubectl exec -n datadog-agent $POD_NAME -- agent status | grep "Status: Running"
+          # 2. Check Agent Internals
+          # We run a remote shell command to find the pod name and query it
+          ansible dev -i ../inventory.ini --private-key ../ansible_key.pem \
+            -u ubuntu --become \
+            -m shell -a "POD=\$(kubectl get pods -n datadog-agent -l app=datadog-agent -o jsonpath='{.items[0].metadata.name}') && kubectl exec -n datadog-agent \$POD -- agent status | grep 'Status: Running'"
+          
           echo "--- DEV HEALTHY ---"
 
       # =========================================================
@@ -117,12 +124,16 @@ jobs:
             --extra-vars "datadog_api_key=${{ env.DD_API_KEY }}"
 
       - name: "TEST: Verify Test Health"
+        working-directory: ./ansible
         run: |
-          # Switch context to TEST Cluster
-          aws eks update-kubeconfig --name datadog-demo-test --region us-east-1
+          echo "--- STARTING REMOTE HEALTH CHECKS (TEST) ---"
+          export ANSIBLE_HOST_KEY_CHECKING=False
           
-          echo "--- STARTING AUTOMATED HEALTH CHECKS (TEST) ---"
-          kubectl rollout status daemonset/datadog-agent -n datadog-agent --timeout=60s
+          # 1. Check Rollout
+          ansible test -i ../inventory.ini --private-key ../ansible_key.pem \
+            -u ubuntu --become \
+            -m shell -a "kubectl rollout status daemonset/datadog-agent -n datadog-agent --timeout=60s"
+          
           echo "--- TEST HEALTHY ---"
 
       # =========================================================
@@ -138,10 +149,14 @@ jobs:
             --extra-vars "datadog_api_key=${{ env.DD_API_KEY }}"
 
       - name: "TEST: Verify Prod Health"
+        working-directory: ./ansible
         run: |
-          # Switch context to PROD Cluster
-          aws eks update-kubeconfig --name datadog-demo-prod --region us-east-1
+          echo "--- STARTING REMOTE HEALTH CHECKS (PROD) ---"
+          export ANSIBLE_HOST_KEY_CHECKING=False
           
-          echo "--- STARTING AUTOMATED HEALTH CHECKS (PROD) ---"
-          kubectl rollout status daemonset/datadog-agent -n datadog-agent --timeout=60s
+          # 1. Check Rollout
+          ansible prod -i ../inventory.ini --private-key ../ansible_key.pem \
+            -u ubuntu --become \
+            -m shell -a "kubectl rollout status daemonset/datadog-agent -n datadog-agent --timeout=60s"
+          
           echo "--- DEPLOYMENT COMPLETE ---"
