@@ -93,14 +93,33 @@ jobs:
       - name: Run Playbook (PROD)
         run: |
           export ANSIBLE_HOST_KEY_CHECKING=False
+          
+          # We run in check mode first to log the expected changes
+          echo "--- STARTING PROD DRY RUN ---"
+          ansible-playbook -i inventory.ini ansible/playbook.yml \
+            --check \
+            --private-key ansible_key.pem \
+            --limit prod \
+            --extra-vars "datadog_api_key=${{ env.DD_API_KEY }} \
+            process_agent_enabled=true \
+            logs_enabled=${{ vars.LOGS_ENABLED }} \
+            agent_request_memory=${{ vars.AGENT_REQ_MEM }} \
+            agent_limit_memory=${{ vars.AGENT_LIM_MEM }} \
+            agent_request_cpu=${{ vars.AGENT_REQ_CPU }} \
+            agent_limit_cpu=${{ vars.AGENT_LIM_CPU }}"
+
+          # Then we run for real
+          echo "--- STARTING ACTUAL PROD DEPLOYMENT ---"
           ansible-playbook -i inventory.ini ansible/playbook.yml \
             --private-key ansible_key.pem \
             --limit prod \
             --extra-vars "datadog_api_key=${{ env.DD_API_KEY }} \
             process_agent_enabled=true \
             logs_enabled=${{ vars.LOGS_ENABLED }} \
-            agent_limit_memory=${{ vars.AGENT_MEM_LIMIT }} \
-            agent_limit_cpu=${{ vars.AGENT_CPU_LIMIT }}"
+            agent_request_memory=${{ vars.AGENT_REQ_MEM }} \
+            agent_limit_memory=${{ vars.AGENT_LIM_MEM }} \
+            agent_request_cpu=${{ vars.AGENT_REQ_CPU }} \
+            agent_limit_cpu=${{ vars.AGENT_LIM_CPU }}"
 
       # 6. Verify Health
       - name: "Health Check (PROD)"
