@@ -1,7 +1,11 @@
 name: Agent Sequential Deployment
 
 on:
-  workflow_dispatch: # Manual trigger, but config comes from Repo Vars now
+  push:
+    branches: [ main, 'feature/**' ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch: 
 
 permissions:
   id-token: write
@@ -9,7 +13,7 @@ permissions:
 
 jobs:
   # ---------------------------------------------------------
-  # JOB 1: PREPARE (Build Inventory & State)
+  # JOB 1: PREPARE (Inventory Generation)
   # ---------------------------------------------------------
   prepare-inventory:
     name: "Gen Inventory"
@@ -28,24 +32,17 @@ jobs:
         working-directory: ./terraform
         run: |
           terraform init
-          
-          # Retrieve SSH Key
           terraform output -raw private_key > ../ansible_key.pem
           chmod 600 ../ansible_key.pem
           
-          # Build Inventory File
           DEV_IP=$(terraform output -raw dev_ip)
           TEST_IP=$(terraform output -raw test_ip)
-          PROD_IP=$(terraform output -raw prod_ip)
 
           echo "[dev]" > ../inventory.ini
           echo "$DEV_IP env_tag=dev hostname_alias=Datadog-Demo-Dev" >> ../inventory.ini
           
           echo "[test]" >> ../inventory.ini
           echo "$TEST_IP env_tag=test hostname_alias=Datadog-Demo-Test" >> ../inventory.ini
-          
-          echo "[prod]" >> ../inventory.ini
-          echo "$PROD_IP env_tag=prod hostname_alias=Datadog-Demo-Prod" >> ../inventory.ini
 
       - uses: actions/upload-artifact@v4
         with:
@@ -57,7 +54,7 @@ jobs:
           overwrite: true
 
   # ---------------------------------------------------------
-  # JOB 2: DEPLOY TO DEV
+  # JOB 2: DEPLOY TO DEV (Sandbox & Main)
   # ---------------------------------------------------------
   deploy-dev:
     name: "Deploy Dev"
@@ -70,30 +67,34 @@ jobs:
         with: { name: deployment-artifacts }
       - run: chmod 600 ansible_key.pem
       
-      # 1. Install Dependencies
       - name: Install Dependencies
         run: |
           pip install kubernetes ansible
           ansible-galaxy collection install kubernetes.core
           curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl" && chmod +x kubectl && sudo mv kubectl /usr/local/bin/
 
-      # 2. Configure AWS Credentials (MUST BE BEFORE FETCH SECRETS)
       - uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: arn:aws:iam::404612059897:role/GitHubActionRole
           aws-region: us-east-1
 
-      # 3. Fetch Secrets
       - name: Fetch Secrets
         run: |
           SECRET_JSON=$(aws secretsmanager get-secret-value --secret-id prod/datadog/keys --region us-east-1 --query SecretString --output text)
           echo "DD_API_KEY=$(echo $SECRET_JSON | jq -r .DD_API_KEY)" >> $GITHUB_ENV
 
-      # 4. Run Playbook
       - name: Run Playbook (DEV)
         run: |
+          # Enable check mode ONLY for Pull Requests
+          CHECK_MODE=""
+          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            CHECK_MODE="--check"
+            echo "--- DRY RUN MODE ENABLED ---"
+          fi
+
           export ANSIBLE_HOST_KEY_CHECKING=False
           ansible-playbook -i inventory.ini ansible/playbook.yml \
+            $CHECK_MODE \
             --private-key ansible_key.pem \
             --limit dev \
             --extra-vars "datadog_api_key=${{ env.DD_API_KEY }} \
@@ -104,21 +105,22 @@ jobs:
             agent_request_cpu=${{ vars.AGENT_REQ_CPU }} \
             agent_limit_cpu=${{ vars.AGENT_LIM_CPU }}"
 
-      # 5. Health Check
       - name: "Health Check (DEV)"
+        if: github.event_name != 'pull_request' # Only check health if it's a real deployment
         run: |
-          echo "--- VERIFYING DEV ROLLOUT ---"
           export ANSIBLE_HOST_KEY_CHECKING=False
           ansible dev -i inventory.ini --private-key ansible_key.pem \
             -u ubuntu --become \
             -m shell -a "export PATH=\$PATH:/snap/bin; microk8s kubectl rollout status daemonset/datadog-agent -n datadog-agent --timeout=60s"
 
   # ---------------------------------------------------------
-  # JOB 3: DEPLOY TO TEST
+  # JOB 3: DEPLOY TO TEST (Main & PR Verification)
   # ---------------------------------------------------------
   deploy-test:
     name: "Deploy Test"
     needs: deploy-dev
+    # Runs on 'main' for deployment OR 'pull_request' for dry run validation
+    if: github.ref == 'refs/heads/main' || github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     environment: test
     steps:
@@ -145,8 +147,15 @@ jobs:
 
       - name: Run Playbook (TEST)
         run: |
+          CHECK_MODE=""
+          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            CHECK_MODE="--check"
+            echo "--- DRY RUN MODE ENABLED ---"
+          fi
+
           export ANSIBLE_HOST_KEY_CHECKING=False
           ansible-playbook -i inventory.ini ansible/playbook.yml \
+            $CHECK_MODE \
             --private-key ansible_key.pem \
             --limit test \
             --extra-vars "datadog_api_key=${{ env.DD_API_KEY }} \
@@ -158,61 +167,9 @@ jobs:
             agent_limit_cpu=${{ vars.AGENT_LIM_CPU }}"
 
       - name: "Health Check (TEST)"
+        if: github.event_name != 'pull_request'
         run: |
-          echo "--- VERIFYING TEST ROLLOUT ---"
           export ANSIBLE_HOST_KEY_CHECKING=False
           ansible test -i inventory.ini --private-key ansible_key.pem \
-            -u ubuntu --become \
-            -m shell -a "export PATH=\$PATH:/snap/bin; microk8s kubectl rollout status daemonset/datadog-agent -n datadog-agent --timeout=60s"
-
-  # ---------------------------------------------------------
-  # JOB 4: DEPLOY TO PROD
-  # ---------------------------------------------------------
-  deploy-prod:
-    name: "Deploy Prod"
-    needs: deploy-test
-    runs-on: ubuntu-latest
-    environment: prod
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
-        with: { name: deployment-artifacts }
-      - run: chmod 600 ansible_key.pem
-
-      - name: Install Dependencies
-        run: |
-          pip install kubernetes ansible
-          ansible-galaxy collection install kubernetes.core
-          curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl" && chmod +x kubectl && sudo mv kubectl /usr/local/bin/
-
-      - uses: aws-actions/configure-aws-credentials@v4
-        with:
-          role-to-assume: arn:aws:iam::404612059897:role/GitHubActionRole
-          aws-region: us-east-1
-
-      - name: Fetch Secrets
-        run: |
-          SECRET_JSON=$(aws secretsmanager get-secret-value --secret-id prod/datadog/keys --region us-east-1 --query SecretString --output text)
-          echo "DD_API_KEY=$(echo $SECRET_JSON | jq -r .DD_API_KEY)" >> $GITHUB_ENV
-
-      - name: Run Playbook (PROD)
-        run: |
-          export ANSIBLE_HOST_KEY_CHECKING=False
-          ansible-playbook -i inventory.ini ansible/playbook.yml \
-            --private-key ansible_key.pem \
-            --limit prod \
-            --extra-vars "datadog_api_key=${{ env.DD_API_KEY }} \
-            process_agent_enabled=${{ vars.PROCESS_AGENT_ENABLED }} \
-            logs_enabled=${{ vars.LOGS_ENABLED }} \
-            agent_request_memory=${{ vars.AGENT_REQ_MEM }} \
-            agent_limit_memory=${{ vars.AGENT_LIM_MEM }} \
-            agent_request_cpu=${{ vars.AGENT_REQ_CPU }} \
-            agent_limit_cpu=${{ vars.AGENT_LIM_CPU }}"
-
-      - name: "Health Check (PROD)"
-        run: |
-          echo "--- VERIFYING PROD ROLLOUT ---"
-          export ANSIBLE_HOST_KEY_CHECKING=False
-          ansible prod -i inventory.ini --private-key ansible_key.pem \
             -u ubuntu --become \
             -m shell -a "export PATH=\$PATH:/snap/bin; microk8s kubectl rollout status daemonset/datadog-agent -n datadog-agent --timeout=60s"
