@@ -35,7 +35,7 @@
           - "CLUSTER NAME:   {{ cluster_name_val }}"
           - "ENV TAG:        {{ env_tag }}" 
           - "MEMORY LIMIT:   {{ agent_limit_memory }}"
-          - "CPU LIMIT:   {{ agent_limit_cpu }}"
+          - "CPU LIMIT:      {{ agent_limit_cpu }}"
           - "---------------------------------------------------"
 
     # -------------------------------------------------------
