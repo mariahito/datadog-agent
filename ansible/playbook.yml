@@ -5,22 +5,22 @@
   remote_user: ubuntu
   vars:
     # Authentication & Naming
-    datadog_api_key: "{{ lookup('env', 'DD_API_KEY') }}"
+    datadog_api_key: "{{ datadog_api_key }}"
     datadog_site: "datadoghq.com"
     cluster_name_val: "{{ hostname_alias | lower }}"
     #env_tag: "{{ lookup('env', 'DD_ENV_TAG') | default('dev', true) }}"
 
     # --- Feature Flags (Boolean) ---
     # Default to 'true' if not specified in Pipeline
-    process_agent_enabled: "{{ lookup('env', 'DD_PROCESS_AGENT_ENABLED') | default(true, true) }}"
-    logs_enabled: "{{ lookup('env', 'DD_LOGS_ENABLED') | default(true, true) }}"
+    process_agent_enabled: "{{ process_agent_enabled | default(true) }}"
+    logs_enabled: "{{ logs_enabled | default(true) }}"
 
     # --- Resource Sizing (Strings) ---
     # Default to small/medium sizing if not specified
-    agent_request_memory: "{{ lookup('env', 'DD_AGENT_REQ_MEM') | default('256Mi', true) }}"
-    agent_request_cpu: "{{ lookup('env', 'DD_AGENT_REQ_CPU') | default('200m', true) }}"
-    agent_limit_memory: "{{ lookup('env', 'DD_AGENT_LIM_MEM') | default('512Mi', true) }}"
-    agent_limit_cpu: "{{ lookup('env', 'DD_AGENT_LIM_CPU') | default('500m', true) }}"
+    agent_request_memory: "{{ agent_request_memory | default('256Mi') }}"
+    agent_limit_memory: "{{ agent_limit_memory | default('512Mi') }}"
+    agent_request_cpu: "{{ agent_request_cpu | default('200m') }}"
+    agent_limit_cpu: "{{ agent_limit_cpu | default('500m') }}"
 
   tasks:
     # -------------------------------------------------------
@@ -35,6 +35,7 @@
           - "CLUSTER NAME:   {{ cluster_name_val }}"
           - "ENV TAG:        {{ env_tag }}" 
           - "MEMORY LIMIT:   {{ agent_limit_memory }}"
+          - "CPU LIMIT:      {{ agent_limit_cpu }}"
           - "---------------------------------------------------"
 
     # -------------------------------------------------------
