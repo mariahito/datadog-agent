@@ -50,11 +50,13 @@
     - name: Wait for MicroK8s to be Ready
       shell: microk8s status --wait-ready
       changed_when: false
+      when: not ansible_check_mode
 
     - name: Enable Helm and DNS addons
       shell: microk8s enable helm dns
       register: addons_result
       changed_when: "'already enabled' not in addons_result.stdout"
+      when: not ansible_check_mode
 
     - name: Create .kube directory for root
       file:
@@ -64,6 +66,7 @@
 
     - name: Export Kubeconfig
       shell: microk8s config > /root/.kube/config
+      when: not ansible_check_mode
 
     # -------------------------------------------------------
     # PHASE 2: GENERATE CONFIGURATION (Using Template)
@@ -82,11 +85,13 @@
         name: datadog
         repo_url: https://helm.datadoghq.com
         binary_path: /snap/bin/microk8s.helm
+      when: not ansible_check_mode
 
     - name: Ensure Datadog Namespace Exists
       shell: microk8s kubectl create namespace datadog-agent --dry-run=client -o yaml | microk8s kubectl apply -f -
       register: ns_create
       changed_when: "'created' in ns_create.stdout"
+      when: not ansible_check_mode
 
     - name: Deploy Datadog Agent (From Values File)
       command: >
@@ -96,6 +101,7 @@
         --create-namespace
       environment:
         KUBECONFIG: /root/.kube/config
+      when: not ansible_check_mode
 
     # -------------------------------------------------------
     # PHASE 4: DEPLOY SIMULATED APP
@@ -106,3 +112,4 @@
         microk8s kubectl create deployment nginx-app --image=nginx --replicas=2
       register: app_deploy
       changed_when: "'created' in app_deploy.stdout"
+      when: not ansible_check_mode
