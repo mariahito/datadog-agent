@@ -49,7 +49,7 @@
     - name: Wait for MicroK8s to be Ready
       shell: microk8s status --wait-ready
       changed_when: false
-      when: not ansible_check_mod
+      when: not ansible_check_mode
 
     - name: Enable Helm and DNS addons
       shell: microk8s enable helm dns
