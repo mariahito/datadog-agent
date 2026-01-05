@@ -1,4 +1,4 @@
-name: Agent Sequential Deployment
+name: Agent DEV/TEST Sequential Deployment
 
 on:
   push:
